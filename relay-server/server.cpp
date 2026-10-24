@@ -26,32 +26,6 @@
 // ---------------------------------------------------------------------------
 namespace {
 
-std::ofstream log_file;
-
-// One line in server.log: "[12/Oct/2026:18:23:45 +0000] <line>".
-// A failing write (e.g. disk full) is reported once and never stops the server.
-void logmsg(const std::string& line) {
-    static bool reported = false;
-    log_file << '[' << log_timestamp() << "] " << line << std::endl;  // endl flushes
-    if (!log_file) {
-        if (!reported) fprintf(stderr, "warning: writing server.log failed\n");
-        reported = true;
-        log_file.clear();
-    }
-}
-
-// Client text made safe for one log line: control characters become \xNN.
-std::string printable(const std::string& s) {
-    static const char* hex = "0123456789abcdef";
-    std::string out;
-    for (unsigned char c : s) {
-        if (c >= 0x20 && c < 0x7f && c != '\\') { out += static_cast<char>(c); continue; }
-        out += "\\x";
-        out += hex[c >> 4];
-        out += hex[c & 0xf];
-    }
-    return out;
-}
 
 std::string errstr(const std::string& what) { return what + ": " + strerror(errno); }
 

@@ -46,8 +46,5 @@ unsigned int parse_port(const char* str);
 // Local time for the client printout: "2026-10-12 18:23:45".
 std::string timestamp();
 
-// Local time for the server log, Common Log Format with UTC offset: "12/Oct/2026:18:23:45 +0000".
-std::string log_timestamp();
-
 // Sends all of `data`, retrying partial sends. false = connection broken (errno set).
 bool send_all(int fd, const std::string& data);
