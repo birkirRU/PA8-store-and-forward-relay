@@ -18,6 +18,8 @@
 #include <vector>
 
 #include "common.h"
+#include "log_event.h"
+#include "identity.h"
 
 // ---------------------------------------------------------------------------
 // Logging
