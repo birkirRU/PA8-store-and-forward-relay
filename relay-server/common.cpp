@@ -75,12 +75,13 @@ std::vector<std::string> split_fields(const std::string& s, size_t max_fields) {
 }
 
 bool is_valid_name(const std::string& s) {
-    if (s.size() < 1 || s.size() > 12) return false;
+    if (s.size() < 1 || s.size() > 14) return false;
     for (char c : s)
         if (!(
             (c >= 'a' && c <= 'z') ||  
             (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9')))
+            (c >= '0' && c <= '9') || 
+            (c == '_')))
             return false;
     return true;
 }
