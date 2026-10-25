@@ -218,13 +218,7 @@ void Server::read_client(int fd) {
 
 void Server::handle_command(int fd, const std::string& payload) {
 
-    log_event_bytes("RECV",
-        clients_[fd].ip,
-        clients_[fd].port,
-        clients_[fd].name,
-        payload.data(),
-        payload.size()
-    );
+    log_event_bytes("RECV", clients_[fd].ip, clients_[fd].port, clients_[fd].name, payload.data(), payload.size());
 
     std::string com_name = payload.substr(0, payload.find(','));
     std::string answer;
