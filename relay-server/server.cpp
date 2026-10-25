@@ -32,6 +32,7 @@ std::string errstr(const std::string& what) { return what + ": " + strerror(errn
 // Startup or unrecoverable error: report on stderr, then exit.
 [[noreturn]] void fatal(const std::string& why) {
     fprintf(stderr, "tsamserver: %s\n", why.c_str());
+    log_note("FATAL %s", why.c_str());
     exit(1);
 }
 
@@ -72,7 +73,7 @@ private:
         std::string in;           // received bytes not yet forming a complete frame
         std::string out;          // reply bytes the socket has not accepted yet
         bool want_write = false;  // watching EPOLLOUT because `out` is not empty
-        char* ip;
+        std::string ip;
         uint16_t port;
         ConnType type = {ConnType::unknown};
         char* name = nullptr;     // GroupID for peer or name for client
@@ -121,6 +122,9 @@ Server::Server(uint16_t port) {
         fatal(errstr("bind to port " + std::to_string(port)));
     if (listen(listen_fd_, SOMAXCONN) < 0) fatal(errstr("listen"));
 
+    const std::string detail = "listening on port: " + std::to_string(port);
+    log_event("START", NULL, port, GROUP_ID, detail.c_str());
+
     ep_ = epoll_create1(0);
     if (ep_ < 0) fatal(errstr("epoll_create1"));
     epoll_event ev{};
@@ -130,8 +134,6 @@ Server::Server(uint16_t port) {
 
     spare_fd_ = open("/dev/null", O_RDONLY);
 
-    const std::string detail = "listening on port: " + std::to_string(port);
-    log_event("START", NULL, port, GROUP_ID, detail.c_str());
 }
 
 void Server::run() {
@@ -189,7 +191,7 @@ void Server::accept_client() {
     clients_[fd] = Client{next_id_++, "", "", false, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port)};
    
     std::string detail = tag(fd) + " connected (" + std::to_string(clients_.size()) + " connected)";
-    log_event("ACCEPT", clients_[fd].ip, clients_[fd].port, NULL, detail.c_str());
+    log_event("ACCEPT", clients_[fd].ip.c_str(), clients_[fd].port, NULL, detail.c_str());
 }
 
 void Server::read_client(int fd) {
@@ -207,7 +209,7 @@ void Server::read_client(int fd) {
     extract_frames(clients_[fd].in, payloads, problems);
     for (const std::string& why : problems) {
         std::string detail = tag(fd) + ": discarded bytes: " + why;
-        log_event("DROP", clients_[fd].ip, clients_[fd].port, clients_[fd].name, detail.c_str());
+        log_event("DROP", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name, detail.c_str());
     }
 
     for (const std::string& p : payloads) {
@@ -218,8 +220,6 @@ void Server::read_client(int fd) {
 
 void Server::handle_command(int fd, const std::string& payload) {
 
-    log_event_bytes("RECV", clients_[fd].ip, clients_[fd].port, clients_[fd].name, payload.data(), payload.size());
-
     std::string com_name = payload.substr(0, payload.find(','));
     std::string answer;
     if (com_name == "SENDMSG")        answer = sendmsg(split_fields(payload, 4));
@@ -228,10 +228,12 @@ void Server::handle_command(int fd, const std::string& payload) {
 
     if (answer.empty()) {  // unknown command, or wrong fields for a known one
 
-        std::string detail = tag(fd) + ": rejected unknown or malformed command '" + com_name;
-        log_event("DROP", clients_[fd].ip, clients_[fd].port, clients_[fd].name, detail.c_str());
+        std::string detail = tag(fd) + ": rejected unknown or malformed command " + com_name;
+        log_event("DROP", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name, detail.c_str());
         answer = "ERROR,command does not exist or is malformed";
     }
+    log_event_bytes("RECV", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name, payload.data(), payload.size());
+
     reply(fd, answer);
 }
 
@@ -240,9 +242,8 @@ std::string Server::sendmsg(const std::vector<std::string>& f) {
     if (f.size() != 4 || !is_valid_name(f[1]) || !is_valid_name(f[2])) return "";
     mailboxes_[f[2]].push_back({f[1], f[3]});
     stored_++;
-    logmsg("STATE stored message from " + f[1] + " for " + f[2] + " (" +
-           std::to_string(mailboxes_[f[2]].size()) + " waiting for them, " +
-           std::to_string(stored_) + " stored in total)");
+    log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
+         f[1].c_str(), f[2].c_str(), mailboxes_[f[2]].size(), stored_);
     return "OK";
 }
 
@@ -257,8 +258,8 @@ std::string Server::getmsg(const std::vector<std::string>& f) {
     stored_--;
     size_t left = it->second.size();
     if (left == 0) mailboxes_.erase(it);  // so STATUSREQ only lists users with messages
-    logmsg("STATE delivered message from " + m.from + " to " + f[1] + " (" + std::to_string(left) +
-           " left for them, " + std::to_string(stored_) + " stored in total)");
+    log_note("delivered message from %s to %s (%zu left for them, %zu stored in total)",
+         m.from.c_str(), f[1].c_str(), left, stored_);
     return m.from + "," + m.text;
 }
 
@@ -279,16 +280,10 @@ void Server::reply(int fd, const std::string& payload) {
 
         // Not using "DROP" because this is a self generated message that is to long to be sent
         // "DROP" is designed for incoming traffic
-        log_note("%s: reply longer than %zu bytes, not sent", tag(fd), MAX_PAYLOAD);
+        log_note("%s: reply longer than %zu bytes, not sent", tag(fd).c_str(), MAX_PAYLOAD);
         return;
     }
-    log_event_bytes("SEND",
-        clients_[fd].ip, 
-        clients_[fd].port,
-        clients_[fd].name,
-        payload.data(),
-        payload.size()
-    );
+    log_event_bytes("SEND", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name, payload.data(), payload.size());
     clients_[fd].out += frame;
     flush(fd);
 }
@@ -317,23 +312,23 @@ bool Server::flush(int fd) {
             return false;
         }
         c.want_write = want;
-        logmsg(tag(fd) + (want ? ": output queued, client is slow to read" : ": queued output sent"));
+        log_note("%s: %s", tag(fd).c_str(), want ? "output queued, peer is slow to read" : "queued output sent");
     }
     return true;
 }
 
 // Stored messages are kept: users do not have to be connected to receive mail.
 void Server::close_client(int fd, const std::string& reason) {
+    Client c = clients_[fd];
     std::string who = tag(fd);
-    if (!clients_[fd].in.empty())
-        logmsg(who + ": dropped " + std::to_string(clients_[fd].in.size()) + " bytes of an incomplete frame");
+    if (!clients_[fd].in.empty()) // halve finished frame
+        log_note("%s: dropped %zu bytes of an incomplete frame", who.c_str(), clients_[fd].in.size());
     epoll_ctl(ep_, EPOLL_CTL_DEL, fd, nullptr);  // close() removes it anyway; failure is harmless
-    if (close(fd) < 0 && errno != EINTR) logmsg(errstr("close"));  // never retried on Linux
+    if (close(fd) < 0 && errno != EINTR) log_note("close failed: %s", errstr("close"));  // never retried on Linux
     clients_.erase(fd);
 
     std::string detail = "disconnected: " + reason + " (" + std::to_string(clients_.size()) + " connected)";
-    log_event("CLOSE", clients_[fd].ip, clients_[fd].port, clients_[fd].name,detail.c_str());
-    
+    log_event("CLOSE", c.ip.c_str(), c.port, c.name, detail.c_str());
 }
 
 // ---------------------------------------------------------------------------
