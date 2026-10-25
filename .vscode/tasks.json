@@ -1,0 +1,23 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "make",
+            "type": "shell",
+            "command": "make tsamserver_debug tsamclient_debug",
+            "options": { "cwd": "${workspaceFolder}/relay_server" },
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": ["$gcc"],
+            "detail": "Builds relay_server/tsamserver_debug and relay_server/tsamclient_debug. Requires -g in the Makefile's CXXFLAGS -- without it there are no debug symbols to step through."
+        },
+        {
+            "label": "make clean",
+            "type": "shell",
+            "command": "make clean",
+            "options": { "cwd": "${workspaceFolder}/relay_server" },
+            "problemMatcher": []
+        }
+    ]
+}
+
+

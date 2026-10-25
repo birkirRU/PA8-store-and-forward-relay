@@ -76,6 +76,7 @@ private:
         std::string ip;
         uint16_t port;
         ConnType type = {ConnType::unknown};
+        bool connecting = false;
         char* name = nullptr;     // GroupID for peer or name for client
     };
     struct Message {
@@ -87,6 +88,8 @@ private:
 
     void accept_client();
     void read_client(int fd);
+    void connect_peer(const std::string& ip, uint16_t port);
+    void finish_connect(int fd);
     void handle_command(int fd, const std::string& payload);
     std::string sendmsg(const std::vector<std::string>& f);
     std::string getmsg(const std::vector<std::string>& f);
@@ -99,7 +102,7 @@ private:
     int ep_ = -1;
     int listen_fd_ = -1;
     int spare_fd_ = -1;  // kept free so we can still accept-and-close when out of fds
-    int next_id_ = 1;
+    uint64_t next_id_ = 1;
     std::unordered_map<int, Client> clients_;                   // fd -> client
     std::map<std::string, std::deque<Message>> mailboxes_;      // user -> messages, oldest first
     size_t stored_ = 0;                                         // messages in all mailboxes
@@ -137,6 +140,8 @@ Server::Server(uint16_t port) {
 }
 
 void Server::run() {
+    connect_peer("130.208.246.98", 5001); // Instructor
+
     epoll_event events[64];
     while (stop_signal == 0) {
         int n = epoll_wait(ep_, events, 64, -1);  // sleep until something is ready
@@ -148,6 +153,10 @@ void Server::run() {
             int fd = events[i].data.fd;
             if (fd == listen_fd_) { accept_client(); continue; }
             if (!clients_.count(fd)) continue;  // closed earlier in this batch
+            if (clients_[fd].connecting) {
+                if (events[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) finish_connect(fd);
+                continue;
+            }
 
             if (events[i].events & (EPOLLIN | EPOLLHUP | EPOLLERR)) read_client(fd);
             if (clients_.count(fd) && (events[i].events & EPOLLOUT)) flush(fd);
@@ -216,6 +225,54 @@ void Server::read_client(int fd) {
         if (!clients_.count(fd)) break;  // a failed reply closed the connection
         handle_command(fd, p);
     }
+}
+
+void Server::connect_peer(const std::string& ip, uint16_t port) {
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    if (fd < 0) { log_note(errstr("socket failed").c_str()); return; }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) != 1) {
+        log_note("bad peer address %s", ip.c_str());
+        close(fd);
+        return;
+    }
+    int rc = connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
+    if (rc < 0 && errno != EINPROGRESS) {      // EINPROGRESS (handshake in progress) is normal for non-blocking
+        
+        log_note("connect to %s:%u failed: %s", ip.c_str(), port, strerror(errno));
+        close(fd);
+        return;
+    }
+
+    epoll_event ev{};
+    ev.events = EPOLLIN | EPOLLOUT;            // EPOLLOUT = "connect finished"
+    ev.data.fd = fd;
+    if (epoll_ctl(ep_, EPOLL_CTL_ADD, fd, &ev) < 0) { close(fd); return; }
+
+    Client c;
+    c.id = next_id_++;
+    c.ip = ip;
+    c.port = port;
+    c.type.value = ConnType::peer;
+    c.connecting = true;
+    c.want_write = true;                       // we registered EPOLLOUT; flush() will turn it off
+    clients_[fd] = c;
+
+}
+
+void Server::finish_connect(int fd) {
+    int err = 0;
+    socklen_t len = sizeof err;
+    getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);   // did the connect succeed?
+    if (err != 0) { close_client(fd, errstr("connect failed:")); return; }
+
+    Client& c = clients_[fd];
+    c.connecting = false;
+    log_event("CONN", c.ip.c_str(), c.port, nullptr, "outgoing connection established");
+    reply(fd, "HELO," GROUP_ID);
 }
 
 void Server::handle_command(int fd, const std::string& payload) {
@@ -324,7 +381,7 @@ void Server::close_client(int fd, const std::string& reason) {
     if (!clients_[fd].in.empty()) // halve finished frame
         log_note("%s: dropped %zu bytes of an incomplete frame", who.c_str(), clients_[fd].in.size());
     epoll_ctl(ep_, EPOLL_CTL_DEL, fd, nullptr);  // close() removes it anyway; failure is harmless
-    if (close(fd) < 0 && errno != EINTR) log_note("close failed: %s", errstr("close"));  // never retried on Linux
+    if (close(fd) < 0 && errno != EINTR) log_note("close failed: %s", errstr("close").c_str());  // never retried on Linux
     clients_.erase(fd);
 
     std::string detail = "disconnected: " + reason + " (" + std::to_string(clients_.size()) + " connected)";

@@ -1,58 +1,22 @@
-[12/Oct/2026:23:02:33 +0200] tsamserver started on port 4044 (pid 350331)
-[12/Oct/2026:23:02:41 +0200] client 1 connected (1 connected)
-[12/Oct/2026:23:02:43 +0200] client 2 connected (2 connected)
-[12/Oct/2026:23:03:03 +0200] client 1 RECV STATUSREQ
-[12/Oct/2026:23:03:03 +0200] client 1 SEND EMPTY
-[12/Oct/2026:23:03:09 +0200] client 1 RECV SENDMSG,MikeTyson,StephenHawking,Yo Professor! Everybody has a plan until they get punched in the mouth. What's YOUR plan?
-[12/Oct/2026:23:03:09 +0200] STATE stored message from MikeTyson for StephenHawking (1 waiting for them, 1 stored in total)
-[12/Oct/2026:23:03:09 +0200] client 1 SEND OK
-[12/Oct/2026:23:03:14 +0200] client 1 RECV SENDMSG,MikeTyson,StephenHawking,Also, is a black hole heavier than a heavyweight?
-[12/Oct/2026:23:03:14 +0200] STATE stored message from MikeTyson for StephenHawking (2 waiting for them, 2 stored in total)
-[12/Oct/2026:23:03:14 +0200] client 1 SEND OK
-[12/Oct/2026:23:03:23 +0200] client 2 RECV STATUSREQ
-[12/Oct/2026:23:03:23 +0200] client 2 SEND StephenHawking:2
-[12/Oct/2026:23:03:41 +0200] client 2 RECV GETMSG,StephenHawking
-[12/Oct/2026:23:03:41 +0200] STATE delivered message from MikeTyson to StephenHawking (1 left for them, 1 stored in total)
-[12/Oct/2026:23:03:41 +0200] client 2 SEND MikeTyson,Yo Professor! Everybody has a plan until they get punched in the mouth. What's YOUR plan?
-[12/Oct/2026:23:03:45 +0200] client 2 RECV GETMSG,StephenHawking
-[12/Oct/2026:23:03:45 +0200] STATE delivered message from MikeTyson to StephenHawking (0 left for them, 0 stored in total)
-[12/Oct/2026:23:03:45 +0200] client 2 SEND MikeTyson,Also, is a black hole heavier than a heavyweight?
-[12/Oct/2026:23:03:49 +0200] client 2 RECV SENDMSG,StephenHawking,MikeTyson,My plan, Mike, is to stay at a safe distance. Roughly one event horizon.
-[12/Oct/2026:23:03:49 +0200] STATE stored message from StephenHawking for MikeTyson (1 waiting for them, 1 stored in total)
-[12/Oct/2026:23:03:49 +0200] client 2 SEND OK
-[12/Oct/2026:23:03:53 +0200] client 2 RECV SENDMSG,StephenHawking,MikeTyson,And yes. A black hole would win every weight class, but it has terrible footwork.
-[12/Oct/2026:23:03:53 +0200] STATE stored message from StephenHawking for MikeTyson (2 waiting for them, 2 stored in total)
-[12/Oct/2026:23:03:53 +0200] client 2 SEND OK
-[12/Oct/2026:23:03:58 +0200] client 2 RECV SENDMSG,StephenHawking,MikeTyson,P.S. Time slows down near massive objects. That explains your 91-second fights.
-[12/Oct/2026:23:03:58 +0200] STATE stored message from StephenHawking for MikeTyson (3 waiting for them, 3 stored in total)
-[12/Oct/2026:23:03:58 +0200] client 2 SEND OK
-[12/Oct/2026:23:04:02 +0200] client 1 RECV STATUSREQ
-[12/Oct/2026:23:04:02 +0200] client 1 SEND MikeTyson:3
-[12/Oct/2026:23:04:10 +0200] client 1 RECV \x1b[1;2FGETMSG,MikeTyson
-[12/Oct/2026:23:04:10 +0200] client 1: rejected unknown or malformed command '\x1b[1;2FGETMSG'
-[12/Oct/2026:23:04:10 +0200] client 1 SEND ERROR,command does not exist or is malformed
-[12/Oct/2026:23:04:27 +0200] client 1 RECV GETMSG,MikeTyson
-[12/Oct/2026:23:04:27 +0200] STATE delivered message from StephenHawking to MikeTyson (2 left for them, 2 stored in total)
-[12/Oct/2026:23:04:27 +0200] client 1 SEND StephenHawking,My plan, Mike, is to stay at a safe distance. Roughly one event horizon.
-[12/Oct/2026:23:04:33 +0200] client 1 RECV GETMSG,MikeTyson
-[12/Oct/2026:23:04:33 +0200] STATE delivered message from StephenHawking to MikeTyson (1 left for them, 1 stored in total)
-[12/Oct/2026:23:04:33 +0200] client 1 SEND StephenHawking,And yes. A black hole would win every weight class, but it has terrible footwork.
-[12/Oct/2026:23:04:37 +0200] client 1 RECV GETMSG,MikeTyson
-[12/Oct/2026:23:04:37 +0200] STATE delivered message from StephenHawking to MikeTyson (0 left for them, 0 stored in total)
-[12/Oct/2026:23:04:37 +0200] client 1 SEND StephenHawking,P.S. Time slows down near massive objects. That explains your 91-second fights.
-[12/Oct/2026:23:04:40 +0200] client 1 RECV GETMSG,MikeTyson
-[12/Oct/2026:23:04:40 +0200] client 1 SEND NO_MESSAGE
-[12/Oct/2026:23:04:47 +0200] client 1 RECV SENDMSG,MikeTyson,StephenHawking,Respect. You're the only guy who ever knocked ME out, with a theory.
-[12/Oct/2026:23:04:47 +0200] STATE stored message from MikeTyson for StephenHawking (1 waiting for them, 1 stored in total)
-[12/Oct/2026:23:04:47 +0200] client 1 SEND OK
-[12/Oct/2026:23:04:53 +0200] client 1 RECV PUNCH,MikeTyson,StephenHawking
-[12/Oct/2026:23:04:53 +0200] client 1: rejected unknown or malformed command 'PUNCH'
-[12/Oct/2026:23:04:53 +0200] client 1 SEND ERROR,command does not exist or is malformed
-[12/Oct/2026:23:05:00 +0200] client 2 RECV GETMSG,StephenHawking
-[12/Oct/2026:23:05:00 +0200] STATE delivered message from MikeTyson to StephenHawking (0 left for them, 0 stored in total)
-[12/Oct/2026:23:05:00 +0200] client 2 SEND MikeTyson,Respect. You're the only guy who ever knocked ME out, with a theory.
-[12/Oct/2026:23:05:06 +0200] client 2 RECV STATUSREQ
-[12/Oct/2026:23:05:06 +0200] client 2 SEND EMPTY
-[12/Oct/2026:23:05:47 +0200] client 2 disconnected: closed the connection (1 connected)
-[12/Oct/2026:23:06:38 +0200] client 1 disconnected: closed the connection (0 connected)
-[12/Oct/2026:23:06:47 +0200] shutting down on signal 2: 0 connected, 0 stored message(s) discarded
+2026-10-25T14:38:47Z START - G_stammtischen listening on port: 4044
+2026-10-25T14:38:47Z CONN 130.208.246.98:5001 - outgoing connection established
+2026-10-25T14:38:47Z SEND 130.208.246.98:5001 - HELO,G_stammtischen
+2026-10-25T14:38:47Z note Peer1: queued output sent
+2026-10-25T14:38:47Z DROP 130.208.246.98:5001 - Peer1: rejected unknown or malformed command HELO
+2026-10-25T14:38:47Z RECV 130.208.246.98:5001 - HELO,I_instr1
+2026-10-25T14:38:47Z SEND 130.208.246.98:5001 - ERROR,command does not exist or is malformed
+2026-10-25T14:38:48Z DROP 130.208.246.98:5001 - Peer1: rejected unknown or malformed command SERVERS
+2026-10-25T14:38:48Z RECV 130.208.246.98:5001 - SERVERS,I_instr2,130.208.246.98,5002;
+2026-10-25T14:38:48Z SEND 130.208.246.98:5001 - ERROR,command does not exist or is malformed
+2026-10-25T14:39:17Z RECV 130.208.246.98:5001 - STATUSREQ
+2026-10-25T14:39:17Z SEND 130.208.246.98:5001 - EMPTY
+2026-10-25T14:39:17Z DROP 130.208.246.98:5001 - Peer1: rejected unknown or malformed command KEEPALIVE
+2026-10-25T14:39:17Z RECV 130.208.246.98:5001 - KEEPALIVE,0
+2026-10-25T14:39:17Z SEND 130.208.246.98:5001 - ERROR,command does not exist or is malformed
+2026-10-25T14:39:17Z DROP 130.208.246.98:5001 - Peer1: rejected unknown or malformed command ERROR
+2026-10-25T14:39:17Z RECV 130.208.246.98:5001 - ERROR,I_instr1,G_stammtischen,Unknown/unrecognised command
+2026-10-25T14:39:17Z SEND 130.208.246.98:5001 - ERROR,command does not exist or is malformed
+2026-10-25T14:40:17Z DROP 130.208.246.98:5001 - Peer1: rejected unknown or malformed command KEEPALIVE
+2026-10-25T14:40:17Z RECV 130.208.246.98:5001 - KEEPALIVE,0
+2026-10-25T14:40:17Z SEND 130.208.246.98:5001 - ERROR,command does not exist or is malformed
+2026-10-25T14:40:53Z note shutting down on signal 2: 1 connected, 0 stored message(s) discarded

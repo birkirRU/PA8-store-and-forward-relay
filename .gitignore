@@ -1,0 +1,9 @@
+# Ignore all files everywhere
+**/*
+
+# Do not ignore directories (allows Git to look inside them)
+!**/
+
+# Do not ignore files that contain a dot (extensions, hidden files like .gitignore)
+!**/*.*
+!**/.*

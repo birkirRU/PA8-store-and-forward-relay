@@ -2,7 +2,7 @@ CXX = g++
 CXXFLAGS = -Wall -Wextra -std=c++20
 CXXDEBUGFLAGS = -g
 
-COMMON = common.cpp common.h
+COMMON = common.cpp common.h identity.h log_event.h
 
 all: tsamserver tsamclient
 
