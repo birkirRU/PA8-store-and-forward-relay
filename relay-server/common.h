@@ -31,7 +31,8 @@ void extract_frames(std::string& buf, std::vector<std::string>& payloads,
 
 // Splits "SENDMSG,alice,bob,hi, there" into at most `max_fields` fields; the last
 // field keeps any remaining commas: {"SENDMSG","alice","bob","hi, there"}.
-std::vector<std::string> split_fields(const std::string& s, size_t max_fields);
+// if max_fields is left out, it parses all fields and gives them in a list
+std::vector<std::string> split_fields(const std::string& s, size_t max_fields = SIZE_MAX);
 
 // A username: 1-14 ASCII letters + '0' - '9' chars + '_'. Keeps STATUSREQ replies ("bob:2,alice:1") unambiguous.
 bool is_valid_name(const std::string& s);

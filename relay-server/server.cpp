@@ -77,7 +77,7 @@ private:
         uint16_t port;
         ConnType type = {ConnType::unknown};
         bool connecting = false;
-        char* name = nullptr;     // GroupID for peer or name for client
+        std::string name = "";     // GroupID for peer or name for client
     };
     struct Message {
         std::string from;
@@ -91,9 +91,25 @@ private:
     void connect_peer(const std::string& ip, uint16_t port);
     void finish_connect(int fd);
     void handle_command(int fd, const std::string& payload);
-    std::string sendmsg(const std::vector<std::string>& f);
-    std::string getmsg(const std::vector<std::string>& f);
-    std::string statusreq();
+
+
+    // Registry of functions that handle incoming commands
+    // client cmds
+    std::string c_handle(const std::string& payload, const std::string& cmd);
+    std::string c_sendmsg(const std::vector<std::string>& f);
+    std::string c_getmsg(const std::vector<std::string>& f);
+    std::string c_statusreq();
+
+    // peer cmds 
+    std::string p_handle(Client& c, const std::string& payload, const std::string& cmd);
+    std::string p_helo(Client& c, const std::vector<std::string>& f);
+    std::string p_servers(const std::vector<std::string>& f);
+    std::string p_keepalive(const std::vector<std::string>& f);
+    std::string p_getmsgs(const std::vector<std::string>& f);
+    std::string p_sendmsg(const std::vector<std::string>& f);
+    std::string p_statusresp(const std::vector<std::string>& f);
+    std::string p_statusreq();
+
     void reply(int fd, const std::string& text);
     bool flush(int fd);
     void close_client(int fd, const std::string& reason);
@@ -106,6 +122,7 @@ private:
     std::unordered_map<int, Client> clients_;                   // fd -> client
     std::map<std::string, std::deque<Message>> mailboxes_;      // user -> messages, oldest first
     size_t stored_ = 0;                                         // messages in all mailboxes
+    std::vector<Client&> peers_;                                // list of directly connected servers
 };
 
 Server::Server(uint16_t port) {
@@ -218,7 +235,11 @@ void Server::read_client(int fd) {
     extract_frames(clients_[fd].in, payloads, problems);
     for (const std::string& why : problems) {
         std::string detail = tag(fd) + ": discarded bytes: " + why;
-        log_event("DROP", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name, detail.c_str());
+        log_event("DROP",
+            clients_[fd].ip.c_str(),
+            clients_[fd].port,
+            clients_[fd].name.empty() ? nullptr : clients_[fd].name.c_str(),
+            detail.c_str());
     }
 
     for (const std::string& p : payloads) {
@@ -277,25 +298,44 @@ void Server::finish_connect(int fd) {
 
 void Server::handle_command(int fd, const std::string& payload) {
 
-    std::string com_name = payload.substr(0, payload.find(','));
+    Client& c = clients_[fd];
+    std::string cmd = payload.substr(0, payload.find(','));
     std::string answer;
-    if (com_name == "SENDMSG")        answer = sendmsg(split_fields(payload, 4));
-    else if (com_name == "GETMSG")    answer = getmsg(split_fields(payload, 2));
-    else if (com_name == "STATUSREQ") answer = (payload == "STATUSREQ") ? statusreq() : "";
+    
+    // initially upon first connection, you don't know what type the host is 
+    // since "HELO" is the first command a server (peer) needs to send, that is our identification of type
+    if (c.type.value == ConnType::unknown) {
+        c.type.value = (cmd == "HELO") ? ConnType::peer : ConnType::client;
+    } 
+
+    if (c.type.value == ConnType::peer) answer = p_handle(c, payload, cmd);
+    else if (c.type.value == ConnType::client) answer = c_handle(payload, cmd);
+    else answer = p_handle(c, payload, cmd);
+
 
     if (answer.empty()) {  // unknown command, or wrong fields for a known one
 
-        std::string detail = tag(fd) + ": rejected unknown or malformed command " + com_name;
-        log_event("DROP", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name, detail.c_str());
+        std::string detail = tag(fd) + ": rejected unknown or malformed command " + cmd;
+        log_event("DROP", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name.empty() ? nullptr : clients_[fd].name.c_str(), detail.c_str());
         answer = "ERROR,command does not exist or is malformed";
     }
-    log_event_bytes("RECV", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name, payload.data(), payload.size());
+    log_event_bytes("RECV", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name.empty() ? nullptr : clients_[fd].name.c_str(), payload.data(), payload.size());
 
     reply(fd, answer);
 }
 
+std::string Server::c_handle(const std::string& payload, const std::string& cmd) {
+    std::string answer = "";
+
+    if (cmd == "SENDMSG")        answer = c_sendmsg(split_fields(payload, 4));
+    else if (cmd == "GETMSG")    answer = c_getmsg(split_fields(payload, 2));
+    else if (cmd == "STATUSREQ") answer = (payload == "STATUSREQ") ? c_statusreq() : "";
+
+    return answer;
+}
+
 // SENDMSG,<from>,<to>,<message>   -> "OK"
-std::string Server::sendmsg(const std::vector<std::string>& f) {
+std::string Server::c_sendmsg(const std::vector<std::string>& f) {
     if (f.size() != 4 || !is_valid_name(f[1]) || !is_valid_name(f[2])) return "";
     mailboxes_[f[2]].push_back({f[1], f[3]});
     stored_++;
@@ -305,7 +345,7 @@ std::string Server::sendmsg(const std::vector<std::string>& f) {
 }
 
 // GETMSG,<user>   -> "<from>,<message>", or "NO_MESSAGE"
-std::string Server::getmsg(const std::vector<std::string>& f) {
+std::string Server::c_getmsg(const std::vector<std::string>& f) {
     if (f.size() != 2 || !is_valid_name(f[1])) return "";
     auto it = mailboxes_.find(f[1]);
     if (it == mailboxes_.end()) return "NO_MESSAGE";
@@ -321,13 +361,42 @@ std::string Server::getmsg(const std::vector<std::string>& f) {
 }
 
 // STATUSREQ   -> "<user1>:<count1>,<user2>:<count2>,...", or "EMPTY"
-std::string Server::statusreq() {
+std::string Server::c_statusreq() {
     std::string out;
     for (const auto& [user, box] : mailboxes_) {
         if (!out.empty()) out += ',';
         out += user + ":" + std::to_string(box.size());
     }
     return out.empty() ? "EMPTY" : out;
+}
+
+std::string Server::p_handle(Client& client, const std::string& payload, const std::string& cmd) {
+    std::string answer = "";
+
+    if (cmd == "HELO")            answer = p_helo(client, split_fields(payload, 2));
+    else if (cmd == "SERVERS")    answer = p_servers(split_fields(payload));
+    else if (cmd == "KEEPALIVE")  answer = p_keepalive(split_fields(payload, 2));
+    else if (cmd == "GETMSGS")    answer = p_getmsgs(split_fields(payload, 2));
+    else if (cmd == "SENDMSG")    answer = p_sendmsg(split_fields(payload, 5));
+    else if (cmd == "STATUSRESP") answer = p_statusresp(split_fields(payload));
+    else if (cmd == "STATUSREQ")  answer = p_statusreq();
+
+    return answer;
+}
+
+std::string Server::p_helo(Client& c, const std::vector<std::string>& f) {
+    std::string answer = "";
+
+    if (!is_valid_name(f[1].c_str())) return answer;
+    c.name = f[1];
+    peers_.push_back(c);
+
+    answer = "SERVERS";
+    for (const Client& p : peers_) answer += p.name + ',' + p.ip + ',' + std::to_string(p.port);
+}
+
+std::string Server::p_servers(const std::vector<std::string>& f) {
+
 }
 
 // Queues a framed reply and sends what the socket takes now.
@@ -340,7 +409,7 @@ void Server::reply(int fd, const std::string& payload) {
         log_note("%s: reply longer than %zu bytes, not sent", tag(fd).c_str(), MAX_PAYLOAD);
         return;
     }
-    log_event_bytes("SEND", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name, payload.data(), payload.size());
+    log_event_bytes("SEND", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name.empty() ? nullptr : clients_[fd].name.c_str(), payload.data(), payload.size());
     clients_[fd].out += frame;
     flush(fd);
 }
@@ -385,7 +454,7 @@ void Server::close_client(int fd, const std::string& reason) {
     clients_.erase(fd);
 
     std::string detail = "disconnected: " + reason + " (" + std::to_string(clients_.size()) + " connected)";
-    log_event("CLOSE", c.ip.c_str(), c.port, c.name, detail.c_str());
+    log_event("CLOSE", c.ip.c_str(), c.port, c.name.empty() ? nullptr : c.name.c_str(), detail.c_str());
 }
 
 // ---------------------------------------------------------------------------
