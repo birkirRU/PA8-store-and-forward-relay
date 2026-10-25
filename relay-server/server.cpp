@@ -29,10 +29,9 @@ namespace {
 
 std::string errstr(const std::string& what) { return what + ": " + strerror(errno); }
 
-// Startup or unrecoverable error: report on stderr and in the log, then exit.
+// Startup or unrecoverable error: report on stderr, then exit.
 [[noreturn]] void fatal(const std::string& why) {
     fprintf(stderr, "tsamserver: %s\n", why.c_str());
-    logmsg("FATAL " + why);
     exit(1);
 }
 
@@ -44,20 +43,44 @@ void on_stop_signal(int sig) { stop_signal = sig; }
 // ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
+// TODO: extend data model, must manage and differentiate the types
+//      "client" (the user), "peer" (connected server on botnet) and "unknown" ()
+// 
 class Server {
 public:
     explicit Server(uint16_t port);
     void run();  // returns when SIGINT/SIGTERM arrives
 
 private:
+    struct ConnType {
+        enum Value { client, peer, unknown };
+        Value value;
+
+        std::string to_string() const {
+            switch (value) {
+                case client:  return "Client";  // users talking to server
+                case peer:    return "Peer";    // connected server in the botnet
+                case unknown: return "Unknown";
+            }
+            return "Unknown";
+        }
+    };
+    
+    // TODO: Maybe rename this struct to host/node/endpoint
     struct Client {
-        int id;                   // shown in the log; fds get reused, ids do not
+        uint64_t id;                   // shown in the log; fds get reused, ids do not
         std::string in;           // received bytes not yet forming a complete frame
         std::string out;          // reply bytes the socket has not accepted yet
         bool want_write = false;  // watching EPOLLOUT because `out` is not empty
+        char* ip;
+        uint16_t port;
+        ConnType type = {ConnType::unknown};
+        char* name = nullptr;     // GroupID for peer or name for client
     };
     struct Message {
         std::string from;
+        std::string to;
+        time_t timestamp;
         std::string text;
     };
 
@@ -70,7 +93,7 @@ private:
     void reply(int fd, const std::string& text);
     bool flush(int fd);
     void close_client(int fd, const std::string& reason);
-    std::string tag(int fd) { return "client " + std::to_string(clients_[fd].id); }
+    std::string tag(int fd) { return clients_[fd].type.to_string() + std::to_string(clients_[fd].id); }
 
     int ep_ = -1;
     int listen_fd_ = -1;
@@ -88,7 +111,7 @@ Server::Server(uint16_t port) {
     // Lets the server restart on the same port right away (no TIME_WAIT delay).
     int yes = 1;
     if (setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes) < 0)
-        logmsg(errstr("setsockopt(SO_REUSEADDR)"));
+        fatal(errstr("setsockopt(SO_REUSEADDR)"));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -106,7 +129,9 @@ Server::Server(uint16_t port) {
     if (epoll_ctl(ep_, EPOLL_CTL_ADD, listen_fd_, &ev) < 0) fatal(errstr("epoll_ctl(ADD listen)"));
 
     spare_fd_ = open("/dev/null", O_RDONLY);
-    logmsg("tsamserver started on port " + std::to_string(port) + " (pid " + std::to_string(getpid()) + ")");
+
+    const std::string detail = "listening on port: " + std::to_string(port);
+    log_event("START", NULL, port, GROUP_ID, detail.c_str());
 }
 
 void Server::run() {
@@ -126,14 +151,16 @@ void Server::run() {
             if (clients_.count(fd) && (events[i].events & EPOLLOUT)) flush(fd);
         }
     }
-    logmsg("shutting down on signal " + std::to_string(stop_signal) + ": " +
-           std::to_string(clients_.size()) + " connected, " + std::to_string(stored_) +
-           " stored message(s) discarded");
+    
+    log_note("shutting down on signal %d: %zu connected, %zu stored message(s) discarded", stop_signal, clients_.size(), stored_);
 }
 
 // Level-triggered epoll: if more clients are waiting, we are told again.
 void Server::accept_client() {
-    int fd = accept4(listen_fd_, nullptr, nullptr, SOCK_NONBLOCK);
+    sockaddr_in addr{};
+    socklen_t addr_length = sizeof(addr);
+    int fd = accept4(listen_fd_, (sockaddr *)&addr, &addr_length, SOCK_NONBLOCK);
+    
     if (fd < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR || errno == ECONNABORTED)
             return;  // nothing to accept after all, or the client already left
@@ -141,13 +168,13 @@ void Server::accept_client() {
             // Out of descriptors: the waiting connection would keep the listening socket
             // readable forever (busy loop). Free the spare fd, accept and close it, re-reserve.
             close(spare_fd_);
-            int shed = accept(listen_fd_, nullptr, nullptr);
+            int shed = accept(listen_fd_, nullptr, nullptr); 
             if (shed >= 0) close(shed);
             spare_fd_ = open("/dev/null", O_RDONLY);
-            logmsg("out of file descriptors, rejected a connection");
+            log_note("out of file descriptors, rejected a connection");
             return;
         }
-        logmsg(errstr("accept"));
+        log_note("unknown error accepting connection");
         return;
     }
 
@@ -155,12 +182,14 @@ void Server::accept_client() {
     ev.events = EPOLLIN;
     ev.data.fd = fd;
     if (epoll_ctl(ep_, EPOLL_CTL_ADD, fd, &ev) < 0) {
-        logmsg(errstr("epoll_ctl(ADD client), connection refused"));
+        log_note("epoll_ctl(ADD client), connection refused");
         close(fd);
         return;
     }
-    clients_[fd] = Client{next_id_++, "", "", false};
-    logmsg(tag(fd) + " connected (" + std::to_string(clients_.size()) + " connected)");
+    clients_[fd] = Client{next_id_++, "", "", false, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port)};
+   
+    std::string detail = tag(fd) + " connected (" + std::to_string(clients_.size()) + " connected)";
+    log_event("ACCEPT", clients_[fd].ip, clients_[fd].port, NULL, detail.c_str());
 }
 
 void Server::read_client(int fd) {
@@ -176,7 +205,10 @@ void Server::read_client(int fd) {
     std::vector<std::string> payloads, problems;
     clients_[fd].in.append(buf, n);
     extract_frames(clients_[fd].in, payloads, problems);
-    for (const std::string& why : problems) logmsg(tag(fd) + ": discarded bytes: " + why);
+    for (const std::string& why : problems) {
+        std::string detail = tag(fd) + ": discarded bytes: " + why;
+        log_event("DROP", clients_[fd].ip, clients_[fd].port, clients_[fd].name, detail.c_str());
+    }
 
     for (const std::string& p : payloads) {
         if (!clients_.count(fd)) break;  // a failed reply closed the connection
@@ -185,16 +217,25 @@ void Server::read_client(int fd) {
 }
 
 void Server::handle_command(int fd, const std::string& payload) {
-    logmsg(tag(fd) + " RECV " + printable(payload));
 
-    std::string name = payload.substr(0, payload.find(','));
+    log_event_bytes("RECV",
+        clients_[fd].ip,
+        clients_[fd].port,
+        clients_[fd].name,
+        payload.data(),
+        payload.size()
+    );
+
+    std::string com_name = payload.substr(0, payload.find(','));
     std::string answer;
-    if (name == "SENDMSG")        answer = sendmsg(split_fields(payload, 4));
-    else if (name == "GETMSG")    answer = getmsg(split_fields(payload, 2));
-    else if (name == "STATUSREQ") answer = (payload == "STATUSREQ") ? statusreq() : "";
+    if (com_name == "SENDMSG")        answer = sendmsg(split_fields(payload, 4));
+    else if (com_name == "GETMSG")    answer = getmsg(split_fields(payload, 2));
+    else if (com_name == "STATUSREQ") answer = (payload == "STATUSREQ") ? statusreq() : "";
 
     if (answer.empty()) {  // unknown command, or wrong fields for a known one
-        logmsg(tag(fd) + ": rejected unknown or malformed command '" + printable(name) + "'");
+
+        std::string detail = tag(fd) + ": rejected unknown or malformed command '" + com_name;
+        log_event("DROP", clients_[fd].ip, clients_[fd].port, clients_[fd].name, detail.c_str());
         answer = "ERROR,command does not exist or is malformed";
     }
     reply(fd, answer);
@@ -238,13 +279,22 @@ std::string Server::statusreq() {
 }
 
 // Queues a framed reply and sends what the socket takes now.
-void Server::reply(int fd, const std::string& text) {
-    std::string frame = encode_frame(text);
+void Server::reply(int fd, const std::string& payload) {
+    std::string frame = encode_frame(payload);
     if (frame.empty()) {
-        logmsg(tag(fd) + ": reply longer than " + std::to_string(MAX_PAYLOAD) + " bytes, not sent");
+
+        // Not using "DROP" because this is a self generated message that is to long to be sent
+        // "DROP" is designed for incoming traffic
+        log_note("%s: reply longer than %zu bytes, not sent", tag(fd), MAX_PAYLOAD);
         return;
     }
-    logmsg(tag(fd) + " SEND " + printable(text));
+    log_event_bytes("SEND",
+        clients_[fd].ip, 
+        clients_[fd].port,
+        clients_[fd].name,
+        payload.data(),
+        payload.size()
+    );
     clients_[fd].out += frame;
     flush(fd);
 }
@@ -286,7 +336,10 @@ void Server::close_client(int fd, const std::string& reason) {
     epoll_ctl(ep_, EPOLL_CTL_DEL, fd, nullptr);  // close() removes it anyway; failure is harmless
     if (close(fd) < 0 && errno != EINTR) logmsg(errstr("close"));  // never retried on Linux
     clients_.erase(fd);
-    logmsg(who + " disconnected: " + reason + " (" + std::to_string(clients_.size()) + " connected)");
+
+    std::string detail = "disconnected: " + reason + " (" + std::to_string(clients_.size()) + " connected)";
+    log_event("CLOSE", clients_[fd].ip, clients_[fd].port, clients_[fd].name,detail.c_str());
+    
 }
 
 // ---------------------------------------------------------------------------
@@ -297,13 +350,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     unsigned int port = parse_port(argv[1]);
-
-    // A new log per run, so the log of a demo session matches its trace and client output.
-    log_file.open("server.log", std::ios::trunc);
-    if (!log_file) {
-        perror("cannot open server.log");
-        return 1;
-    }
 
     // Ctrl-C / kill end the server with a final log line. No SA_RESTART, so the
     // signal interrupts epoll_wait and the loop sees it immediately.
