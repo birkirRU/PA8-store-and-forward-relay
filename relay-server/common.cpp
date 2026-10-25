@@ -81,7 +81,8 @@ bool is_valid_name(const std::string& s) {
             (c >= 'a' && c <= 'z') ||  
             (c >= 'A' && c <= 'Z') ||
             (c >= '0' && c <= '9') || 
-            (c == '_')))
+            (c == '_') ||
+            (c == '-')))
             return false;
     return true;
 }

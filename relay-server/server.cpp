@@ -13,7 +13,9 @@
 #include <deque>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <string>
+#include <ctime>
 #include <unordered_map>
 #include <vector>
 
@@ -28,6 +30,39 @@ namespace {
 
 
 std::string errstr(const std::string& what) { return what + ": " + strerror(errno); }
+
+std::vector<std::string> split_on(const std::string& s, char sep) {
+    std::vector<std::string> out;
+    size_t start = 0, pos;
+    while ((pos = s.find(sep, start)) != std::string::npos) {
+        out.push_back(s.substr(start, pos - start));
+        start = pos + 1;
+    }
+    out.push_back(s.substr(start));
+    return out;
+}
+
+bool parse_server_entry(const std::string& entry, std::string& id, std::string& ip, uint16_t& port) {
+    std::vector<std::string> parts = split_fields(entry);
+    if (parts.size() != 3) return false;
+
+    id = parts[0];
+    ip = parts[1];
+    const std::string& port_text = parts[2];
+
+    if (!is_valid_name(id)) return false;
+
+    in_addr addr;
+    if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return false;
+
+    if (port_text.empty() || port_text.size() > 5) return false;
+    if (port_text.find_first_not_of("0123456789") != std::string::npos) return false;
+    int value = std::stoi(port_text);
+    if (value < 1 || value > 65535) return false;
+
+    port = static_cast<uint16_t>(value);
+    return true;
+}
 
 // Startup or unrecoverable error: report on stderr, then exit.
 [[noreturn]] void fatal(const std::string& why) {
@@ -74,11 +109,15 @@ private:
         std::string out;          // reply bytes the socket has not accepted yet
         bool want_write = false;  // watching EPOLLOUT because `out` is not empty
         std::string ip;
-        uint16_t port;
+        uint16_t port = 0;
         ConnType type = {ConnType::unknown};
         bool connecting = false;
+        bool outgoing = false;
+        bool sent_helo = false;
         std::string name = "";     // GroupID for peer or name for client
     };
+    struct Endpoint { std::string ip; uint16_t port; };
+    using Answer = std::optional<std::string>;
     struct Message {
         std::string from;
         std::string to;
@@ -101,14 +140,15 @@ private:
     std::string c_statusreq();
 
     // peer cmds 
-    std::string p_handle(Client& c, const std::string& payload, const std::string& cmd);
-    std::string p_helo(Client& c, const std::vector<std::string>& f);
-    std::string p_servers(const std::vector<std::string>& f);
-    std::string p_keepalive(const std::vector<std::string>& f);
-    std::string p_getmsgs(const std::vector<std::string>& f);
-    std::string p_sendmsg(const std::vector<std::string>& f);
-    std::string p_statusresp(const std::vector<std::string>& f);
-    std::string p_statusreq();
+    Answer p_handle(Client& c, const std::string& payload, const std::string& cmd);
+    Answer p_helo(Client& c, const std::vector<std::string>& f);
+    Answer p_servers(const std::string& payload);
+    Answer p_keepalive(const std::vector<std::string>& f);
+    Answer p_getmsgs(const std::vector<std::string>& f);
+    Answer p_sendmsg(const std::vector<std::string>& f);
+    Answer p_statusresp(const std::vector<std::string>& f);
+    Answer p_statusreq();
+    std::string servers_list() const;
 
     void reply(int fd, const std::string& text);
     bool flush(int fd);
@@ -122,7 +162,7 @@ private:
     std::unordered_map<int, Client> clients_;                   // fd -> client
     std::map<std::string, std::deque<Message>> mailboxes_;      // user -> messages, oldest first
     size_t stored_ = 0;                                         // messages in all mailboxes
-    std::vector<Client&> peers_;                                // list of directly connected servers
+    std::map<std::string, Endpoint> known_;
 };
 
 Server::Server(uint16_t port) {
@@ -250,7 +290,7 @@ void Server::read_client(int fd) {
 
 void Server::connect_peer(const std::string& ip, uint16_t port) {
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    if (fd < 0) { log_note(errstr("socket failed").c_str()); return; }
+    if (fd < 0) { log_note("socket failed: %s", strerror(errno)); return; }
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -279,6 +319,7 @@ void Server::connect_peer(const std::string& ip, uint16_t port) {
     c.port = port;
     c.type.value = ConnType::peer;
     c.connecting = true;
+    c.outgoing = true;
     c.want_write = true;                       // we registered EPOLLOUT; flush() will turn it off
     clients_[fd] = c;
 
@@ -288,40 +329,47 @@ void Server::finish_connect(int fd) {
     int err = 0;
     socklen_t len = sizeof err;
     getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);   // did the connect succeed?
-    if (err != 0) { close_client(fd, errstr("connect failed:")); return; }
+    if (err != 0) { close_client(fd, std::string("connect failed: ") + strerror(err)); return; }
 
     Client& c = clients_[fd];
     c.connecting = false;
+    c.sent_helo = true;
     log_event("CONN", c.ip.c_str(), c.port, nullptr, "outgoing connection established");
     reply(fd, "HELO," GROUP_ID);
 }
 
 void Server::handle_command(int fd, const std::string& payload) {
-
     Client& c = clients_[fd];
     std::string cmd = payload.substr(0, payload.find(','));
-    std::string answer;
-    
-    // initially upon first connection, you don't know what type the host is 
-    // since "HELO" is the first command a server (peer) needs to send, that is our identification of type
-    if (c.type.value == ConnType::unknown) {
+    if (c.type.value == ConnType::unknown)
         c.type.value = (cmd == "HELO") ? ConnType::peer : ConnType::client;
-    } 
 
-    if (c.type.value == ConnType::peer) answer = p_handle(c, payload, cmd);
-    else if (c.type.value == ConnType::client) answer = c_handle(payload, cmd);
-    else answer = p_handle(c, payload, cmd);
+    const bool is_peer = c.type.value == ConnType::peer;
+    const std::string name_before = c.name;
+    const char* id = name_before.empty() ? nullptr : name_before.c_str();
 
-
-    if (answer.empty()) {  // unknown command, or wrong fields for a known one
-
-        std::string detail = tag(fd) + ": rejected unknown or malformed command " + cmd;
-        log_event("DROP", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name.empty() ? nullptr : clients_[fd].name.c_str(), detail.c_str());
-        answer = "ERROR,command does not exist or is malformed";
+    Answer answer;
+    if (is_peer) {
+        answer = p_handle(c, payload, cmd);
+    } else {
+        std::string client_answer = c_handle(payload, cmd);
+        if (!client_answer.empty()) answer = client_answer;
     }
-    log_event_bytes("RECV", clients_[fd].ip.c_str(), clients_[fd].port, clients_[fd].name.empty() ? nullptr : clients_[fd].name.c_str(), payload.data(), payload.size());
 
-    reply(fd, answer);
+    if (!answer) {
+        std::string detail = tag(fd) + ": rejected unknown or malformed command " + cmd;
+        log_event("DROP", c.ip.c_str(), c.port, id, detail.c_str());
+        if (!is_peer) reply(fd, "ERROR,command does not exist or is malformed");
+        return;
+    }
+
+    log_event_bytes("RECV", c.ip.c_str(), c.port, id, payload.data(), payload.size());
+    if (!answer->empty()) reply(fd, *answer);
+
+    if (cmd == "HELO" && is_peer && clients_.count(fd) && !clients_[fd].sent_helo) {
+        clients_[fd].sent_helo = true;
+        reply(fd, "HELO," GROUP_ID);
+    }
 }
 
 std::string Server::c_handle(const std::string& payload, const std::string& cmd) {
@@ -337,7 +385,7 @@ std::string Server::c_handle(const std::string& payload, const std::string& cmd)
 // SENDMSG,<from>,<to>,<message>   -> "OK"
 std::string Server::c_sendmsg(const std::vector<std::string>& f) {
     if (f.size() != 4 || !is_valid_name(f[1]) || !is_valid_name(f[2])) return "";
-    mailboxes_[f[2]].push_back({f[1], f[3]});
+    mailboxes_[f[2]].push_back({f[1], f[2], std::time(nullptr), f[3]});
     stored_++;
     log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
          f[1].c_str(), f[2].c_str(), mailboxes_[f[2]].size(), stored_);
@@ -370,33 +418,73 @@ std::string Server::c_statusreq() {
     return out.empty() ? "EMPTY" : out;
 }
 
-std::string Server::p_handle(Client& client, const std::string& payload, const std::string& cmd) {
-    std::string answer = "";
-
-    if (cmd == "HELO")            answer = p_helo(client, split_fields(payload, 2));
-    else if (cmd == "SERVERS")    answer = p_servers(split_fields(payload));
-    else if (cmd == "KEEPALIVE")  answer = p_keepalive(split_fields(payload, 2));
-    else if (cmd == "GETMSGS")    answer = p_getmsgs(split_fields(payload, 2));
-    else if (cmd == "SENDMSG")    answer = p_sendmsg(split_fields(payload, 5));
-    else if (cmd == "STATUSRESP") answer = p_statusresp(split_fields(payload));
-    else if (cmd == "STATUSREQ")  answer = p_statusreq();
-
-    return answer;
+Server::Answer Server::p_handle(Client& c, const std::string& payload, const std::string& cmd) {
+    if (cmd == "HELO")       return p_helo(c, split_fields(payload, 2));
+    if (cmd == "SERVERS")    return p_servers(payload);
+    if (cmd == "KEEPALIVE")  return p_keepalive(split_fields(payload, 2));
+    if (cmd == "GETMSGS")    return p_getmsgs(split_fields(payload, 2));
+    if (cmd == "SENDMSG")    return p_sendmsg(split_fields(payload, 5));
+    if (cmd == "STATUSRESP") return p_statusresp(split_fields(payload));
+    if (cmd == "STATUSREQ")  return payload == "STATUSREQ" ? p_statusreq() : Answer{};
+    if (cmd == "ERROR") {
+        log_note("peer %s sent %s", c.name.c_str(), payload.c_str());
+        return std::string();
+    }
+    return std::nullopt;
 }
 
-std::string Server::p_helo(Client& c, const std::vector<std::string>& f) {
-    std::string answer = "";
-
-    if (!is_valid_name(f[1].c_str())) return answer;
+Server::Answer Server::p_helo(Client& c, const std::vector<std::string>& f) {
+    if (f.size() != 2 || !is_valid_name(f[1])) return std::nullopt;
     c.name = f[1];
-    peers_.push_back(c);
-
-    answer = "SERVERS";
-    for (const Client& p : peers_) answer += p.name + ',' + p.ip + ',' + std::to_string(p.port);
+    return "SERVERS," + servers_list();
 }
 
-std::string Server::p_servers(const std::vector<std::string>& f) {
+Server::Answer Server::p_servers(const std::string& payload) {
+    const std::string prefix = "SERVERS,";
+    if (payload.compare(0, prefix.size(), prefix) != 0) return std::nullopt;
 
+    std::string list = payload.substr(prefix.size());
+    for (const std::string& entry : split_on(list, ';')) {
+        if (entry.empty()) continue;
+
+        std::string id, ip;
+        uint16_t port = 0;
+        if (!parse_server_entry(entry, id, ip, port)) {
+            log_note("ignored bad SERVERS entry: %s", entry.c_str());
+            continue;
+        }
+        if (id == GROUP_ID) continue;
+
+        bool is_new = known_.count(id) == 0;
+        if (is_new && known_.size() >= 500) continue;
+
+        known_[id] = Endpoint{ip, port};
+        if (is_new) log_note("learned server %s at %s:%u", id.c_str(), ip.c_str(), port);
+    }
+    return std::string();
+}
+
+Server::Answer Server::p_statusreq() { return "STATUSRESP," + c_statusreq(); }
+
+Server::Answer Server::p_keepalive(const std::vector<std::string>& f) {
+    return f.size() == 2 ? Answer{""} : Answer{};
+}
+
+Server::Answer Server::p_statusresp(const std::vector<std::string>& f) {
+    return f.size() >= 2 ? Answer{""} : Answer{};
+}
+
+Server::Answer Server::p_getmsgs(const std::vector<std::string>&) { return std::nullopt; }
+Server::Answer Server::p_sendmsg(const std::vector<std::string>&) { return std::nullopt; }
+
+std::string Server::servers_list() const {
+    std::string out;
+    for (const auto& kv : clients_) {
+        const Client& c = kv.second;
+        if (c.type.value == ConnType::peer && c.outgoing && !c.connecting && !c.name.empty())
+            out += c.name + ',' + c.ip + ',' + std::to_string(c.port) + ';';
+    }
+    return out;
 }
 
 // Queues a framed reply and sends what the socket takes now.
