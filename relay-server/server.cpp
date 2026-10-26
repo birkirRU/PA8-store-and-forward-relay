@@ -22,6 +22,7 @@
 #include "common.h"
 #include "log_event.h"
 #include "identity.h"
+#include "server.h"
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -30,39 +31,6 @@ namespace {
 
 
 std::string errstr(const std::string& what) { return what + ": " + strerror(errno); }
-
-std::vector<std::string> split_on(const std::string& s, char sep) {
-    std::vector<std::string> out;
-    size_t start = 0, pos;
-    while ((pos = s.find(sep, start)) != std::string::npos) {
-        out.push_back(s.substr(start, pos - start));
-        start = pos + 1;
-    }
-    out.push_back(s.substr(start));
-    return out;
-}
-
-bool parse_server_entry(const std::string& entry, std::string& id, std::string& ip, uint16_t& port) {
-    std::vector<std::string> parts = split_fields(entry);
-    if (parts.size() != 3) return false;
-
-    id = parts[0];
-    ip = parts[1];
-    const std::string& port_text = parts[2];
-
-    if (!is_valid_name(id)) return false;
-
-    in_addr addr;
-    if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return false;
-
-    if (port_text.empty() || port_text.size() > 5) return false;
-    if (port_text.find_first_not_of("0123456789") != std::string::npos) return false;
-    int value = std::stoi(port_text);
-    if (value < 1 || value > 65535) return false;
-
-    port = static_cast<uint16_t>(value);
-    return true;
-}
 
 // Startup or unrecoverable error: report on stderr, then exit.
 [[noreturn]] void fatal(const std::string& why) {
@@ -75,95 +43,6 @@ volatile sig_atomic_t stop_signal = 0;
 void on_stop_signal(int sig) { stop_signal = sig; }
 
 }  // namespace
-
-// ---------------------------------------------------------------------------
-// Server
-// ---------------------------------------------------------------------------
-// TODO: extend data model, must manage and differentiate the types
-//      "client" (the user), "peer" (connected server on botnet) and "unknown" ()
-// 
-class Server {
-public:
-    explicit Server(uint16_t port);
-    void run();  // returns when SIGINT/SIGTERM arrives
-
-private:
-    struct ConnType {
-        enum Value { client, peer, unknown };
-        Value value;
-
-        std::string to_string() const {
-            switch (value) {
-                case client:  return "Client";  // users talking to server
-                case peer:    return "Peer";    // connected server in the botnet
-                case unknown: return "Unknown";
-            }
-            return "Unknown";
-        }
-    };
-    
-    // TODO: Maybe rename this struct to host/node/endpoint
-    struct Client {
-        uint64_t id;                   // shown in the log; fds get reused, ids do not
-        std::string in;           // received bytes not yet forming a complete frame
-        std::string out;          // reply bytes the socket has not accepted yet
-        bool want_write = false;  // watching EPOLLOUT because `out` is not empty
-        std::string ip;
-        uint16_t port = 0;
-        ConnType type = {ConnType::unknown};
-        bool connecting = false;
-        bool outgoing = false;
-        bool sent_helo = false;
-        std::string name = "";     // GroupID for peer or name for client
-    };
-    struct Endpoint { std::string ip; uint16_t port; };
-    using Answer = std::optional<std::string>;
-    struct Message {
-        std::string from;
-        std::string to;
-        time_t timestamp;
-        std::string text;
-    };
-
-    void accept_client();
-    void read_client(int fd);
-    void connect_peer(const std::string& ip, uint16_t port);
-    void finish_connect(int fd);
-    void handle_command(int fd, const std::string& payload);
-
-
-    // Registry of functions that handle incoming commands
-    // client cmds
-    std::string c_handle(const std::string& payload, const std::string& cmd);
-    std::string c_sendmsg(const std::vector<std::string>& f);
-    std::string c_getmsg(const std::vector<std::string>& f);
-    std::string c_statusreq();
-
-    // peer cmds 
-    Answer p_handle(Client& c, const std::string& payload, const std::string& cmd);
-    Answer p_helo(Client& c, const std::vector<std::string>& f);
-    Answer p_servers(const std::string& payload);
-    Answer p_keepalive(const std::vector<std::string>& f);
-    Answer p_getmsgs(const std::vector<std::string>& f);
-    Answer p_sendmsg(const std::vector<std::string>& f);
-    Answer p_statusresp(const std::vector<std::string>& f);
-    Answer p_statusreq();
-    std::string servers_list() const;
-
-    void reply(int fd, const std::string& text);
-    bool flush(int fd);
-    void close_client(int fd, const std::string& reason);
-    std::string tag(int fd) { return clients_[fd].type.to_string() + std::to_string(clients_[fd].id); }
-
-    int ep_ = -1;
-    int listen_fd_ = -1;
-    int spare_fd_ = -1;  // kept free so we can still accept-and-close when out of fds
-    uint64_t next_id_ = 1;
-    std::unordered_map<int, Client> clients_;                   // fd -> client
-    std::map<std::string, std::deque<Message>> mailboxes_;      // user -> messages, oldest first
-    size_t stored_ = 0;                                         // messages in all mailboxes
-    std::map<std::string, Endpoint> known_;
-};
 
 Server::Server(uint16_t port) {
     listen_fd_ = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
@@ -337,145 +216,6 @@ void Server::finish_connect(int fd) {
     log_event("CONN", c.ip.c_str(), c.port, nullptr, "outgoing connection established");
     reply(fd, "HELO," GROUP_ID);
 }
-
-void Server::handle_command(int fd, const std::string& payload) {
-    Client& c = clients_[fd];
-    std::string cmd = payload.substr(0, payload.find(','));
-    if (c.type.value == ConnType::unknown)
-        c.type.value = (cmd == "HELO") ? ConnType::peer : ConnType::client;
-
-    const bool is_peer = c.type.value == ConnType::peer;
-    const std::string name_before = c.name;
-    const char* id = name_before.empty() ? nullptr : name_before.c_str();
-
-    Answer answer;
-    if (is_peer) {
-        answer = p_handle(c, payload, cmd);
-    } else {
-        std::string client_answer = c_handle(payload, cmd);
-        if (!client_answer.empty()) answer = client_answer;
-    }
-
-    if (!answer) {
-        std::string detail = tag(fd) + ": rejected unknown or malformed command " + cmd;
-        log_event("DROP", c.ip.c_str(), c.port, id, detail.c_str());
-        if (!is_peer) reply(fd, "ERROR,command does not exist or is malformed");
-        return;
-    }
-
-    log_event_bytes("RECV", c.ip.c_str(), c.port, id, payload.data(), payload.size());
-    if (!answer->empty()) reply(fd, *answer);
-
-    if (cmd == "HELO" && is_peer && clients_.count(fd) && !clients_[fd].sent_helo) {
-        clients_[fd].sent_helo = true;
-        reply(fd, "HELO," GROUP_ID);
-    }
-}
-
-std::string Server::c_handle(const std::string& payload, const std::string& cmd) {
-    std::string answer = "";
-
-    if (cmd == "SENDMSG")        answer = c_sendmsg(split_fields(payload, 4));
-    else if (cmd == "GETMSG")    answer = c_getmsg(split_fields(payload, 2));
-    else if (cmd == "STATUSREQ") answer = (payload == "STATUSREQ") ? c_statusreq() : "";
-
-    return answer;
-}
-
-// SENDMSG,<from>,<to>,<message>   -> "OK"
-std::string Server::c_sendmsg(const std::vector<std::string>& f) {
-    if (f.size() != 4 || !is_valid_name(f[1]) || !is_valid_name(f[2])) return "";
-    mailboxes_[f[2]].push_back({f[1], f[2], std::time(nullptr), f[3]});
-    stored_++;
-    log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
-         f[1].c_str(), f[2].c_str(), mailboxes_[f[2]].size(), stored_);
-    return "OK";
-}
-
-// GETMSG,<user>   -> "<from>,<message>", or "NO_MESSAGE"
-std::string Server::c_getmsg(const std::vector<std::string>& f) {
-    if (f.size() != 2 || !is_valid_name(f[1])) return "";
-    auto it = mailboxes_.find(f[1]);
-    if (it == mailboxes_.end()) return "NO_MESSAGE";
-
-    Message m = it->second.front();
-    it->second.pop_front();
-    stored_--;
-    size_t left = it->second.size();
-    if (left == 0) mailboxes_.erase(it);  // so STATUSREQ only lists users with messages
-    log_note("delivered message from %s to %s (%zu left for them, %zu stored in total)",
-         m.from.c_str(), f[1].c_str(), left, stored_);
-    return m.from + "," + m.text;
-}
-
-// STATUSREQ   -> "<user1>:<count1>,<user2>:<count2>,...", or "EMPTY"
-std::string Server::c_statusreq() {
-    std::string out;
-    for (const auto& [user, box] : mailboxes_) {
-        if (!out.empty()) out += ',';
-        out += user + ":" + std::to_string(box.size());
-    }
-    return out.empty() ? "EMPTY" : out;
-}
-
-Server::Answer Server::p_handle(Client& c, const std::string& payload, const std::string& cmd) {
-    if (cmd == "HELO")       return p_helo(c, split_fields(payload, 2));
-    if (cmd == "SERVERS")    return p_servers(payload);
-    if (cmd == "KEEPALIVE")  return p_keepalive(split_fields(payload, 2));
-    if (cmd == "GETMSGS")    return p_getmsgs(split_fields(payload, 2));
-    if (cmd == "SENDMSG")    return p_sendmsg(split_fields(payload, 5));
-    if (cmd == "STATUSRESP") return p_statusresp(split_fields(payload));
-    if (cmd == "STATUSREQ")  return payload == "STATUSREQ" ? p_statusreq() : Answer{};
-    if (cmd == "ERROR") {
-        log_note("peer %s sent %s", c.name.c_str(), payload.c_str());
-        return std::string();
-    }
-    return std::nullopt;
-}
-
-Server::Answer Server::p_helo(Client& c, const std::vector<std::string>& f) {
-    if (f.size() != 2 || !is_valid_name(f[1])) return std::nullopt;
-    c.name = f[1];
-    return "SERVERS," + servers_list();
-}
-
-Server::Answer Server::p_servers(const std::string& payload) {
-    const std::string prefix = "SERVERS,";
-    if (payload.compare(0, prefix.size(), prefix) != 0) return std::nullopt;
-
-    std::string list = payload.substr(prefix.size());
-    for (const std::string& entry : split_on(list, ';')) {
-        if (entry.empty()) continue;
-
-        std::string id, ip;
-        uint16_t port = 0;
-        if (!parse_server_entry(entry, id, ip, port)) {
-            log_note("ignored bad SERVERS entry: %s", entry.c_str());
-            continue;
-        }
-        if (id == GROUP_ID) continue;
-
-        bool is_new = known_.count(id) == 0;
-        if (is_new && known_.size() >= 500) continue;
-
-        known_[id] = Endpoint{ip, port};
-        if (is_new) log_note("learned server %s at %s:%u", id.c_str(), ip.c_str(), port);
-    }
-    return std::string();
-}
-
-Server::Answer Server::p_statusreq() { return "STATUSRESP," + c_statusreq(); }
-
-Server::Answer Server::p_keepalive(const std::vector<std::string>& f) {
-    return f.size() == 2 ? Answer{""} : Answer{};
-}
-
-Server::Answer Server::p_statusresp(const std::vector<std::string>& f) {
-    return f.size() >= 2 ? Answer{""} : Answer{};
-}
-
-Server::Answer Server::p_getmsgs(const std::vector<std::string>&) { return std::nullopt; }
-Server::Answer Server::p_sendmsg(const std::vector<std::string>&) { return std::nullopt; }
 
 std::string Server::servers_list() const {
     std::string out;
