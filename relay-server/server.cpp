@@ -319,7 +319,7 @@ void Server::on_timer() {
     }
 
     for (int fd : due) {
-        if (!clients_.count(fd)) continue;           // closed by an earlier reply()
+        if (!clients_.count(fd)) continue;           // closed by an earlier queue_send() due to flush()
         Client& c = clients_[fd];
         c.last_keepalive = now;                      // set first, so a failed send is not retried every tick
 

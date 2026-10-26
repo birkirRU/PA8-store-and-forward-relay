@@ -93,10 +93,35 @@ std::string Server::c_handle(const std::string& payload, const std::string& cmd)
 // SENDMSG,<from>,<to>,<message>   -> "OK"
 std::string Server::c_sendmsg(const std::vector<std::string>& f) {
     if (f.size() != 4 || !is_valid_name(f[1]) || !is_valid_name(f[2])) return "";
-    mailboxes_[f[2]].push_back({f[1], f[2], std::time(nullptr), f[3]});
-    stored_++;
-    log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
-         f[1].c_str(), f[2].c_str(), mailboxes_[f[2]].size(), stored_);
+
+    Message msg{f[1], f[2], std::time(nullptr), f[3]};
+    // Before deciding wether to 
+    // store or forward the message; check if recepiant peer exists (is connected to server)
+    int peer_fd = -1;
+    for (const auto& kv : clients_) {
+        const Client& c = kv.second;
+        if (c.type.value == ConnType::peer && // its a peer connection
+            !c.connecting && // peer connection is established
+            !c.name.empty() && // name is set
+            c.name == f[2]
+        )
+            peer_fd = kv.first;
+    }
+    
+    if (peer_fd != -1 ) { // it exists
+        Client& c = clients_[peer_fd];
+
+        // SENDMSG,<FROM_GROUP_ID>,<TO_GROUP_ID>,<TIMESTAMP>,<message content>
+        std::string msg_string = f[0] + "," + msg.from + "," + msg.to + "," + std::to_string(msg.timestamp) + "," + msg.text;
+        queue_send(peer_fd, msg_string);
+    }
+
+    else {  // no connected peer was found to deliver the message to, store it for time being, waiting for other peers to fetch it
+        mailboxes_[f[2]].push_back(msg);
+        stored_++;
+        log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
+            f[1].c_str(), f[2].c_str(), mailboxes_[f[2]].size(), stored_);
+    }
     return "OK";
 }
 
@@ -184,4 +209,6 @@ Server::Answer Server::p_statusresp(const std::vector<std::string>& f) {
 }
 
 Server::Answer Server::p_getmsgs(const std::vector<std::string>&) { return std::nullopt; }
+
+// SENDMSG,<FROM_GROUP_ID>,<TO_GROUP_ID>,<TIMESTAMP>,<message content>
 Server::Answer Server::p_sendmsg(const std::vector<std::string>&) { return std::nullopt; }
