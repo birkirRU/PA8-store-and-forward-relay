@@ -42,6 +42,7 @@ private:
         bool outgoing = false;
         bool sent_helo = false;
         std::string name = "";
+        time_t last_keepalive = 0;
     };
     struct Endpoint { std::string ip; uint16_t port; };
     using Answer = std::optional<std::string>;
@@ -75,10 +76,14 @@ private:
     Answer p_statusreq();
 
     std::string servers_list() const;
-    void reply(int fd, const std::string& text);
+    void queue_send(int fd, const std::string& text);
     bool flush(int fd);
     void close_client(int fd, const std::string& reason);
     std::string tag(int fd) { return clients_[fd].type.to_string() + std::to_string(clients_[fd].id); }
+
+    // KEEPALIVE
+    void on_timer();
+    int timer_fd_ = -1;
 
     int ep_ = -1;
     int listen_fd_ = -1;

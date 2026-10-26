@@ -3,6 +3,7 @@
 #include <netinet/in.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -70,6 +71,21 @@ Server::Server(uint16_t port) {
     ev.events = EPOLLIN;
     ev.data.fd = listen_fd_;
     if (epoll_ctl(ep_, EPOLL_CTL_ADD, listen_fd_, &ev) < 0) fatal(errstr("epoll_ctl(ADD listen)"));
+    
+    // Register timer_fd_ to EPOLL instance
+    timer_fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    if (timer_fd_ < 0) fatal(errstr("timerfd_create"));
+
+    itimerspec its{};
+    its.it_value.tv_sec = 5;       // first tick after 5 s
+    its.it_interval.tv_sec = 5;    // then every 5 s
+    if (timerfd_settime(timer_fd_, 0, &its, nullptr) < 0) fatal(errstr("timerfd_settime"));
+
+    epoll_event tev{};
+    tev.events = EPOLLIN;
+    tev.data.fd = timer_fd_;
+    if (epoll_ctl(ep_, EPOLL_CTL_ADD, timer_fd_, &tev) < 0) fatal(errstr("epoll_ctl(ADD timer)"));
+
 
     spare_fd_ = open("/dev/null", O_RDONLY);
 
@@ -88,6 +104,7 @@ void Server::run() {
         for (int i = 0; i < n; i++) {
             int fd = events[i].data.fd;
             if (fd == listen_fd_) { accept_client(); continue; }
+            if (fd == timer_fd_) { on_timer(); continue; }
             if (!clients_.count(fd)) continue;  // closed earlier in this batch
             if (clients_[fd].connecting) {
                 if (events[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) finish_connect(fd);
@@ -214,7 +231,7 @@ void Server::finish_connect(int fd) {
     c.connecting = false;
     c.sent_helo = true;
     log_event("CONN", c.ip.c_str(), c.port, nullptr, "outgoing connection established");
-    reply(fd, "HELO," GROUP_ID);
+    queue_send(fd, "HELO," GROUP_ID);
 }
 
 std::string Server::servers_list() const {
@@ -227,8 +244,8 @@ std::string Server::servers_list() const {
     return out;
 }
 
-// Queues a framed reply and sends what the socket takes now.
-void Server::reply(int fd, const std::string& payload) {
+// Queues a framed message/data and sends what the socket takes now.
+void Server::queue_send(int fd, const std::string& payload) {
     std::string frame = encode_frame(payload);
     if (frame.empty()) {
 
@@ -283,6 +300,33 @@ void Server::close_client(int fd, const std::string& reason) {
 
     std::string detail = "disconnected: " + reason + " (" + std::to_string(clients_.size()) + " connected)";
     log_event("CLOSE", c.ip.c_str(), c.port, c.name.empty() ? nullptr : c.name.c_str(), detail.c_str());
+}
+
+void Server::on_timer() {
+    uint64_t expirations;
+    if (read(timer_fd_, &expirations, sizeof expirations) < 0) return;   // must read, or epoll fires again
+
+    time_t now = time(nullptr);
+
+    // reply() can close a connection and erase it from clients_,
+    // so collect the fds first and don't loop over the map while sending.
+    std::vector<int> due;
+    for (const auto& kv : clients_) {
+        const Client& c = kv.second;
+        if (c.type.value == ConnType::peer && !c.connecting && !c.name.empty() &&
+            now - c.last_keepalive >= 60)
+            due.push_back(kv.first);
+    }
+
+    for (int fd : due) {
+        if (!clients_.count(fd)) continue;           // closed by an earlier reply()
+        Client& c = clients_[fd];
+        c.last_keepalive = now;                      // set first, so a failed send is not retried every tick
+
+        auto box = mailboxes_.find(c.name);
+        size_t waiting = (box == mailboxes_.end()) ? 0 : box->second.size();
+        queue_send(fd, "KEEPALIVE," + std::to_string(waiting));
+    }
 }
 
 // ---------------------------------------------------------------------------

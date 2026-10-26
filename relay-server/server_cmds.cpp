@@ -67,16 +67,16 @@ void Server::handle_command(int fd, const std::string& payload) {
     if (!answer) {
         std::string detail = tag(fd) + ": rejected unknown or malformed command " + cmd;
         log_event("DROP", c.ip.c_str(), c.port, id, detail.c_str());
-        if (!is_peer) reply(fd, "ERROR,command does not exist or is malformed");
+        if (!is_peer) queue_send(fd, "ERROR,command does not exist or is malformed");
         return;
     }
 
     log_event_bytes("RECV", c.ip.c_str(), c.port, id, payload.data(), payload.size());
-    if (!answer->empty()) reply(fd, *answer);
+    if (!answer->empty()) queue_send(fd, *answer);
 
     if (cmd == "HELO" && is_peer && clients_.count(fd) && !clients_[fd].sent_helo) {
         clients_[fd].sent_helo = true;
-        reply(fd, "HELO," GROUP_ID);
+        queue_send(fd, "HELO," GROUP_ID);
     }
 }
 
@@ -147,6 +147,7 @@ Server::Answer Server::p_helo(Client& c, const std::vector<std::string>& f) {
     return "SERVERS," + servers_list();
 }
 
+// SERVERS,<id>,<ip>,<port>;<id>,<ip>,<port>;... (a reply to our HELO: nothing to send back)
 Server::Answer Server::p_servers(const std::string& payload) {
     const std::string prefix = "SERVERS,";
     if (payload.compare(0, prefix.size(), prefix) != 0) return std::nullopt;
@@ -164,7 +165,7 @@ Server::Answer Server::p_servers(const std::string& payload) {
         if (id == GROUP_ID) continue;
 
         bool is_new = known_.count(id) == 0;
-        if (is_new && known_.size() >= 500) continue;
+        if (is_new && known_.size() >= 500) continue; // Cap on known server, a hostile server can fill our memory
 
         known_[id] = Endpoint{ip, port};
         if (is_new) log_note("learned server %s at %s:%u", id.c_str(), ip.c_str(), port);
