@@ -10,6 +10,9 @@
 #include <unordered_map>
 #include <vector>
 
+const uint16_t INSTRUCTOR_PORT = 5001;
+const std::string  INSTRUCTOR_IP = "130.208.246.98";
+
 class Server {
 public:
     explicit Server(uint16_t port);
@@ -80,6 +83,8 @@ private:
     bool flush(int fd);
     void close_client(int fd, const std::string& reason);
     std::string tag(int fd) { return clients_[fd].type.to_string() + std::to_string(clients_[fd].id); }
+
+    std::string find_own_ip(const char* via_ip, uint16_t via_port);
 
     // KEEPALIVE
     void on_timer();

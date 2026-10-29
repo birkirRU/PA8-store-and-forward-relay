@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 // Code shared by tsamserver and tsamclient: framing, command parsing and small helpers.
 

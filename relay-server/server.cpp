@@ -64,8 +64,8 @@ Server::Server(uint16_t port): listening_port_(port) {
 
 
     // get listening address of local server
-    char buf[INET_ADDRSTRLEN];
-    own_ip_ = inet_ntop(AF_INET, &addr.sin_addr, buf, sizeof(buf));
+    own_ip_ = find_own_ip(INSTRUCTOR_IP.c_str(), INSTRUCTOR_PORT);   // the constants already used for the first connection
+    log_note("own address: %s", own_ip_.empty() ? "unknown" : own_ip_.c_str());
 
     const std::string detail = "listening on port: " + std::to_string(port);
     log_event("START", NULL, port, GROUP_ID, detail.c_str());
@@ -97,7 +97,7 @@ Server::Server(uint16_t port): listening_port_(port) {
 }
 
 void Server::run() {
-    connect_peer("130.208.246.98", 5001); // Instructor
+    connect_peer(INSTRUCTOR_IP, INSTRUCTOR_PORT);
 
     epoll_event events[64];
     while (stop_signal == 0) {
@@ -240,7 +240,7 @@ void Server::finish_connect(int fd) {
 }
 
 std::string Server::servers_list() const {
-    std::string out = GROUP_ID + ',' + own_ip_ + ',' + std::to_string(listening_port_) + ';' ; // list yourself first
+    std::string out = std::string(GROUP_ID) + ',' + own_ip_ + ',' + std::to_string(listening_port_) + ';' ; // list yourself first
     for (const auto& kv : clients_) {
         const Client& c = kv.second;
         if (c.type.value == ConnType::peer && c.outgoing && !c.connecting && !c.name.empty())
@@ -332,6 +332,29 @@ void Server::on_timer() {
         size_t waiting = (box == mailboxes_.end()) ? 0 : box->second.size();
         queue_send(fd, "KEEPALIVE," + std::to_string(waiting));
     }
+}
+
+// Local address the kernel would use to reach `via_ip`. No packet is sent.
+std::string Server::find_own_ip(const char* via_ip, uint16_t via_port) {
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) return "";
+
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(via_port);
+    if (inet_pton(AF_INET, via_ip, &dst.sin_addr) != 1) { close(s); return ""; }
+
+    std::string ip;
+    if (connect(s, reinterpret_cast<sockaddr*>(&dst), sizeof dst) == 0) {
+        sockaddr_in local{};
+        socklen_t len = sizeof local;
+        char buf[INET_ADDRSTRLEN];
+        if (getsockname(s, reinterpret_cast<sockaddr*>(&local), &len) == 0 &&
+            inet_ntop(AF_INET, &local.sin_addr, buf, sizeof buf))
+            ip = buf;
+    }
+    close(s);
+    return ip;
 }
 
 // ---------------------------------------------------------------------------
