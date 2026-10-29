@@ -45,7 +45,7 @@ void on_stop_signal(int sig) { stop_signal = sig; }
 
 }  // namespace
 
-Server::Server(uint16_t port) {
+Server::Server(uint16_t port): listening_port_(port) {
     listen_fd_ = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (listen_fd_ < 0) fatal(errstr("socket"));
 
@@ -61,6 +61,11 @@ Server::Server(uint16_t port) {
     if (bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof addr) < 0)
         fatal(errstr("bind to port " + std::to_string(port)));
     if (listen(listen_fd_, SOMAXCONN) < 0) fatal(errstr("listen"));
+
+
+    // get listening address of local server
+    char buf[INET_ADDRSTRLEN];
+    own_ip_ = inet_ntop(AF_INET, &addr.sin_addr, buf, sizeof(buf));
 
     const std::string detail = "listening on port: " + std::to_string(port);
     log_event("START", NULL, port, GROUP_ID, detail.c_str());
@@ -235,7 +240,7 @@ void Server::finish_connect(int fd) {
 }
 
 std::string Server::servers_list() const {
-    std::string out;
+    std::string out = GROUP_ID + ',' + own_ip_ + ',' + std::to_string(listening_port_) + ';' ; // list yourself first
     for (const auto& kv : clients_) {
         const Client& c = kv.second;
         if (c.type.value == ConnType::peer && c.outgoing && !c.connecting && !c.name.empty())

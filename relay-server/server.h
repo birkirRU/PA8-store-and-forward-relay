@@ -85,6 +85,8 @@ private:
     void on_timer();
     int timer_fd_ = -1;
 
+    uint16_t listening_port_;
+    std::string own_ip_;
     int ep_ = -1;
     int listen_fd_ = -1;
     int spare_fd_ = -1;
