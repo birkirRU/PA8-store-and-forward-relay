@@ -211,4 +211,24 @@ Server::Answer Server::p_statusresp(const std::vector<std::string>& f) {
 Server::Answer Server::p_getmsgs(const std::vector<std::string>&) { return std::nullopt; }
 
 // SENDMSG,<FROM_GROUP_ID>,<TO_GROUP_ID>,<TIMESTAMP>,<message content>
-Server::Answer Server::p_sendmsg(const std::vector<std::string>&) { return std::nullopt; }
+Server::Answer Server::p_sendmsg(const std::vector<std::string>& f) { 
+    if (f.size() != 5 || !is_valid_name(f[1])  || !is_valid_name(f[2])) return std::nullopt; 
+
+    if (f[3].find_first_not_of("0123456789") != std::string::npos
+        || f[3].empty()
+        || f[3].size() > 10
+        ) return std::nullopt;
+
+    time_t ts = std::stoll(f[3]);
+    
+    if (f[2] == GROUP_ID) {
+        Message msg{f[1], f[2], ts, f[4]};
+        mailboxes_[GROUP_ID].push_back(msg);
+        stored_++;
+        log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
+            f[1].c_str(), f[2].c_str(), mailboxes_[f[2]].size(), stored_);
+        return "";
+    }
+
+    return std::nullopt;
+}
