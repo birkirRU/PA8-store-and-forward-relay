@@ -66,11 +66,11 @@ private:
     std::string c_statusreq();
 
     // Peer commands.
-    Answer p_handle(Client& c, const std::string& payload, const std::string& cmd);
+    Answer p_handle(int fd, Client& c, const std::string& payload, const std::string& cmd);
     Answer p_helo(Client& c, const std::vector<std::string>& f);
     Answer p_servers(const std::string& payload);
     Answer p_keepalive(const std::vector<std::string>& f);
-    Answer p_getmsgs(const std::vector<std::string>& f);
+    Answer p_getmsgs(int fd, const std::vector<std::string>& f);
     Answer p_sendmsg(const std::vector<std::string>& f);
     Answer p_statusresp(const std::vector<std::string>& f);
     Answer p_statusreq();

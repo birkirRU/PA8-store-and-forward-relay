@@ -58,7 +58,7 @@ void Server::handle_command(int fd, const std::string& payload) {
 
     Answer answer;
     if (is_peer) {
-        answer = p_handle(c, payload, cmd);
+        answer = p_handle(fd, c, payload, cmd);
     } else {
         std::string client_answer = c_handle(payload, cmd);
         if (!client_answer.empty()) answer = client_answer;
@@ -151,11 +151,11 @@ std::string Server::c_statusreq() {
     return out.empty() ? "EMPTY" : out;
 }
 
-Server::Answer Server::p_handle(Client& c, const std::string& payload, const std::string& cmd) {
+Server::Answer Server::p_handle(int fd, Client& c, const std::string& payload, const std::string& cmd) {
     if (cmd == "HELO")       return p_helo(c, split_fields(payload, 2));
     if (cmd == "SERVERS")    return p_servers(payload);
     if (cmd == "KEEPALIVE")  return p_keepalive(split_fields(payload, 2));
-    if (cmd == "GETMSGS")    return p_getmsgs(split_fields(payload, 2));
+    if (cmd == "GETMSGS")    return p_getmsgs(fd, split_fields(payload, 2));
     if (cmd == "SENDMSG")    return p_sendmsg(split_fields(payload, 5));
     if (cmd == "STATUSRESP") return p_statusresp(split_fields(payload));
     if (cmd == "STATUSREQ")  return payload == "STATUSREQ" ? p_statusreq() : Answer{};
@@ -208,7 +208,22 @@ Server::Answer Server::p_statusresp(const std::vector<std::string>& f) {
     return f.size() >= 2 ? Answer{""} : Answer{};
 }
 
-Server::Answer Server::p_getmsgs(const std::vector<std::string>&) { return std::nullopt; }
+Server::Answer Server::p_getmsgs(int fd, const std::vector<std::string>& f) {
+    if (f.size() != 2 || !is_valid_name(f[1])) return std::nullopt; 
+    auto it = mailboxes_.find(f[1]);
+    if (it == mailboxes_.end()) return "";
+
+    for (const Message& msg : it->second){
+        if (!clients_.count(fd))break; 
+        std::string msg_string = "SENDMSG," + msg.from + "," + msg.to + "," + std::to_string(msg.timestamp) + "," + msg.text;
+        queue_send(fd, msg_string);
+    }
+
+    log_note("sent %zu held message(s) to %s", it->second.size(), f[1].c_str());
+    stored_ -= it->second.size();
+    mailboxes_.erase(it);
+    return "";
+}
 
 // SENDMSG,<FROM_GROUP_ID>,<TO_GROUP_ID>,<TIMESTAMP>,<message content>
 Server::Answer Server::p_sendmsg(const std::vector<std::string>& f) { 
