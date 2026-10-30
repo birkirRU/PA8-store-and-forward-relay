@@ -208,7 +208,16 @@ Server::Answer Server::p_servers(const std::string& payload) {
 Server::Answer Server::p_statusreq() { return "STATUSRESP," + c_statusreq(); }
 
 Server::Answer Server::p_keepalive(const std::vector<std::string>& f) {
-    return f.size() == 2 ? Answer{""} : Answer{};
+    if (f.size() != 2) return std::nullopt;
+
+    if (f[1].find_first_not_of("0123456789") != std::string::npos
+        || f[1].empty()
+        || f[1].size() > 6) return std::nullopt;
+
+    if (std::stoi(f[1]) > 0) return "GETMSGS," GROUP_ID;
+
+    return "";
+
 }
 
 Server::Answer Server::p_statusresp(const std::vector<std::string>& f) {
