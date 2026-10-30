@@ -15,7 +15,7 @@
 | Logging | `server.cpp` | Replaced `logmsg` with `log_event`, `log_event_bytes` and `log_note`. Logs now carry event type, IP, port and server ID. |
 | Accept change | `server.cpp` | `accept_client()` now records the client's IP and port. |
 | Name rules | `common.cpp`, `common.h` | Names can be 1-14 characters and may include `_` and `-`. `split_fields` has a default for `max_fields`. |
-
+| Relay behaviour | `p_sendmsg()` and `p_statusresp()` | Modified, such that each message is stored upon recieved `SENDMSG`. On recieved `STATUSRESP` only fetch and store msgs that aren't you/any connected peer. |
 ### Bjorn:
 | Part | Files | What I did |
 |---|---|---|
