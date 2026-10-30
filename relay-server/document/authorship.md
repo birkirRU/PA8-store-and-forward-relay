@@ -16,6 +16,16 @@
 | Accept change | `server.cpp` | `accept_client()` now records the client's IP and port. |
 | Name rules | `common.cpp`, `common.h` | Names can be 1-14 characters and may include `_` and `-`. `split_fields` has a default for `max_fields`. |
 
+### Bjorn:
+| Part | Files | What I did |
+|---|---|---|
+| Incoming SENDMSG | `server_cmds.cpp` | `p_sendmsg`: checks the 5 fields, both group IDs and the timestamp (digits only, at most 10), and stores messages addressed to us under our `GROUP_ID` so our client can fetch them with `GETMSG`. |
+| GETMSGS | `server_cmds.cpp`, `server.h` | `p_getmsgs`: answers with one `SENDMSG` per held message, then deletes them. Passed `fd` through `p_handle` so one command can send several replies. |
+| KEEPALIVE | `server_cmds.cpp` | `p_keepalive`: checks the count and answers `GETMSGS,<our id>` when it is above 0. |
+| STATUSRESP | `server_cmds.cpp`, `server.h` | `p_statusresp`: reads the `<group>:<count>` entries and sends `GETMSGS` for messages held for us. |
+| LISTSERVERS client command | `server_cmds.cpp`, `client.cpp` | Lists the servers we are connected to. Added to the client's help line. |
+| Peer management | `server.cpp`, `server.h`, `server_cmds.cpp` | Written by Claude and me at my request (see AI assistant use), from a design we worked out together: aim for 4 peers, one new connection per tick, `G_` servers first, a 60 s wait before redialling, the instructor as a fallback, and at most 8 peers. |
+
 Files used by this diff but **not shown in it**: `identity.h` (`GROUP_ID`) and `log_event.h`. (Add a line here about who wrote those if they are yours.)
 
 ## Sources used (man pages)
@@ -40,8 +50,14 @@ I also used the course project specification for the protocol (`HELO`, `SERVERS`
 
 ## AI assistant use
 
-I used an AI assistant (Claude) to **understand concepts** that are hard write code around.
+We used an AI assistant (Claude) to **understand concepts** that are hard to write code around.
 
+### Birkir
 - **Level-triggered epoll loop:** how `epoll_wait` keeps reporting an fd as ready until I deal with it, and why that matters in my loop.
 - **timerfd:** how a timer becomes a file descriptor that fits into the epoll loop the same way `listen_fd_` does, and why I must `read()` it or epoll fires again.
 - **How `flush` works:** how output is buffered per client, and how `EPOLLOUT` is switched on/off when the socket cannot take all the data.
+
+### Bjorn:
+- **Step-by-step guidance:** for `p_sendmsg`, `p_getmsgs`, `p_keepalive`, `p_statusresp` and `LISTSERVERS`, Claude explained the existing code and then reviewed what I wrote.
+- **Peer management:** Claude wrote this code with me after we simplified the design together (`maintain_peers`, `count_peers`, `pick_candidate`, the retry rule in `close_client`, and the peer limit in `handle_command`).
+- **Reviewing:** reading the assignment, finding why our Assignment 6 tests failed, and reviewing commits and merge conflicts.
