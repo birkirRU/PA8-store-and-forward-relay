@@ -315,15 +315,19 @@ void Server::on_timer() {
 
     // reply() can close a connection and erase it from clients_,
     // so collect the fds first and don't loop over the map while sending.
-    std::vector<int> due;
+    std::vector<int> due_keepalive;
+    std::vector<int> due_statusreq;
     for (const auto& kv : clients_) {
         const Client& c = kv.second;
         if (c.type.value == ConnType::peer && !c.connecting && !c.name.empty() &&
             now - c.last_keepalive >= 60)
-            due.push_back(kv.first);
+            due_keepalive.push_back(kv.first);
+        if (c.type.value == ConnType::peer && !c.connecting && !c.name.empty() &&
+            now - c.last_statusreq >= 90)
+            due_statusreq.push_back(kv.first);
     }
 
-    for (int fd : due) {
+    for (int fd : due_keepalive) {
         if (!clients_.count(fd)) continue;           // closed by an earlier queue_send() due to flush()
         Client& c = clients_[fd];
         c.last_keepalive = now;                      // set first, so a failed send is not retried every tick
@@ -331,6 +335,14 @@ void Server::on_timer() {
         auto box = mailboxes_.find(c.name);
         size_t waiting = (box == mailboxes_.end()) ? 0 : box->second.size();
         queue_send(fd, "KEEPALIVE," + std::to_string(waiting));
+    }
+    
+    for (int fd : due_statusreq) {
+        if (!clients_.count(fd)) continue;
+        Client& c = clients_[fd];
+        c.last_statusreq = now;
+
+        queue_send(fd, "STATUSREQ");
     }
 }
 

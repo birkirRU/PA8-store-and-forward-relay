@@ -46,6 +46,7 @@ private:
         bool sent_helo = false;
         std::string name = "";
         time_t last_keepalive = 0;
+        time_t last_statusreq = 0;
     };
     struct Endpoint { std::string ip; uint16_t port; };
     using Answer = std::optional<std::string>;
