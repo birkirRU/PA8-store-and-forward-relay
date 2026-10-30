@@ -13,6 +13,10 @@
 const uint16_t INSTRUCTOR_PORT = 5001;
 const std::string  INSTRUCTOR_IP = "130.208.246.98";
 
+const size_t TARGET_PEERS = 4;      // open new server connections while we have fewer than this
+const size_t MAX_PEERS = 8;         // close incoming servers beyond this
+const time_t RETRY_AFTER = 60;      // seconds before we dial the same server again
+
 class Server {
 public:
     explicit Server(uint16_t port);
@@ -47,8 +51,13 @@ private:
         std::string name = "";
         time_t last_keepalive = 0;
         time_t last_statusreq = 0;
+        std::string target = "";      // group ID we dialled (empty for the instructor fallback)
     };
-    struct Endpoint { std::string ip; uint16_t port; };
+    struct Endpoint {
+        std::string ip;
+        uint16_t port;
+        time_t next_try = 0;          // don't dial before this time
+    };
     using Answer = std::optional<std::string>;
     struct Message {
         std::string from;
@@ -59,7 +68,7 @@ private:
 
     void accept_client();
     void read_client(int fd);
-    void connect_peer(const std::string& ip, uint16_t port);
+    void connect_peer(const std::string& ip, uint16_t port, const std::string& target = "");
     void finish_connect(int fd);
     void handle_command(int fd, const std::string& payload);
 
@@ -90,6 +99,12 @@ private:
     // KEEPALIVE
     void on_timer();
     int timer_fd_ = -1;
+
+    // Staying connected to 4-8 servers
+    void maintain_peers();
+    size_t count_peers() const;
+    std::string pick_candidate() const;
+    time_t next_fallback_ = 0;
 
     uint16_t listening_port_;
     std::string own_ip_;

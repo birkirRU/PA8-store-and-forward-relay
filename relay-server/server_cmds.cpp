@@ -72,6 +72,13 @@ void Server::handle_command(int fd, const std::string& payload) {
     }
 
     log_event_bytes("RECV", c.ip.c_str(), c.port, id, payload.data(), payload.size());
+
+    if (cmd == "HELO" && is_peer && !c.outgoing && count_peers() > MAX_PEERS) {
+        log_note("%s: already %zu peers, closing the connection from %s", tag(fd).c_str(), MAX_PEERS, c.name.c_str());
+        close_client(fd, "peer limit reached");
+        return;
+    }
+
     if (!answer->empty()) queue_send(fd, *answer);
 
     if (cmd == "HELO" && is_peer && clients_.count(fd) && !clients_[fd].sent_helo) {
@@ -200,7 +207,9 @@ Server::Answer Server::p_servers(const std::string& payload) {
         bool is_new = known_.count(id) == 0;
         if (is_new && known_.size() >= 500) continue; // Cap on known server, a hostile server can fill our memory
 
-        known_[id] = Endpoint{ip, port};
+        Endpoint& ep = known_[id];   // update in place: keeps next_try of a server we already knew
+        ep.ip = ip;
+        ep.port = port;
         if (is_new) log_note("learned server %s at %s:%u", id.c_str(), ip.c_str(), port);
     }
     return std::string();

@@ -189,7 +189,7 @@ void Server::read_client(int fd) {
     }
 }
 
-void Server::connect_peer(const std::string& ip, uint16_t port) {
+void Server::connect_peer(const std::string& ip, uint16_t port, const std::string& target) {
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (fd < 0) { log_note("socket failed: %s", strerror(errno)); return; }
 
@@ -222,6 +222,7 @@ void Server::connect_peer(const std::string& ip, uint16_t port) {
     c.connecting = true;
     c.outgoing = true;
     c.want_write = true;                       // we registered EPOLLOUT; flush() will turn it off
+    c.target = target;
     clients_[fd] = c;
 
 }
@@ -305,6 +306,12 @@ void Server::close_client(int fd, const std::string& reason) {
 
     std::string detail = "disconnected: " + reason + " (" + std::to_string(clients_.size()) + " connected)";
     log_event("CLOSE", c.ip.c_str(), c.port, c.name.empty() ? nullptr : c.name.c_str(), detail.c_str());
+
+    // Failed or dropped: either way, don't dial this server again right away.
+    if (c.outgoing && !c.target.empty()) {
+        auto it = known_.find(c.target);
+        if (it != known_.end()) it->second.next_try = time(nullptr) + RETRY_AFTER;
+    }
 }
 
 void Server::on_timer() {
@@ -312,6 +319,7 @@ void Server::on_timer() {
     if (read(timer_fd_, &expirations, sizeof expirations) < 0) return;   // must read, or epoll fires again
 
     time_t now = time(nullptr);
+    maintain_peers();
 
     // reply() can close a connection and erase it from clients_,
     // so collect the fds first and don't loop over the map while sending.
@@ -343,6 +351,59 @@ void Server::on_timer() {
         c.last_statusreq = now;
         queue_send(fd, "STATUSREQ");
     }
+}
+
+// Called every tick. Below TARGET_PEERS we start one new connection to a student
+// server (G_) if we know one. With no peers we fall back to the
+// first instructor whose SERVERS reply refills known_.
+void Server::maintain_peers() {
+    size_t peers = count_peers();
+    if (peers >= TARGET_PEERS) return;
+
+    std::string id = pick_candidate();
+    if (!id.empty()) {
+        log_note("%zu peer(s), want %zu: connecting to %s", peers, TARGET_PEERS, id.c_str());
+        connect_peer(known_[id].ip, known_[id].port, id);
+        return;
+    }
+
+    time_t now = time(nullptr);
+    if (peers == 0 && now >= next_fallback_) {
+        next_fallback_ = now + RETRY_AFTER;
+        log_note("no peers and no server to dial, connecting to the first instructor");
+        connect_peer(INSTRUCTOR_IP, INSTRUCTOR_PORT);
+    }
+}
+
+// Server connections including incoming ones and ones still connecting.
+size_t Server::count_peers() const {
+    size_t n = 0;
+    for (const auto& kv : clients_)
+        if (kv.second.type.value == ConnType::peer) n++;
+    return n;
+}
+
+// A known server we are not connected to and have not tried recently.
+// Student servers first; an instructor only if there is no student server.
+std::string Server::pick_candidate() const {
+    time_t now = time(nullptr);
+    std::string instructor;
+    for (const auto& [id, ep] : known_) {
+        if (ep.next_try > now) continue;                                  // tried recently
+        if (ep.ip == own_ip_ && ep.port == listening_port_) continue;     // ourselves under another name
+
+        bool connected = false;
+        for (const auto& kv : clients_) {
+            const Client& c = kv.second;
+            if (c.name == id || c.target == id || (c.outgoing && c.ip == ep.ip && c.port == ep.port))
+                connected = true;
+        }
+        if (connected) continue;
+
+        if (id.rfind("G_", 0) == 0) return id;
+        if (instructor.empty()) instructor = id;
+    }
+    return instructor;
 }
 
 // Local address the kernel would use to reach `via_ip`. No packet is sent.
