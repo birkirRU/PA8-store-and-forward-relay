@@ -46,7 +46,7 @@ Files used by this diff but **not shown in it**: `identity.h` (`GROUP_ID`) and `
 | Timestamps / keepalive timing | `time(nullptr)` | `time(2)` |
 | Close and error text | `close`, `strerror` | `close(2)`, `strerror(3)` |
 
-I also used the course project specification for the protocol (`HELO`, `SERVERS`, `KEEPALIVE`, `STATUSREQ`, `STATUSRESP`, `ERROR`).
+We also used the course project specification for the protocol (`HELO`, `SERVERS`, `KEEPALIVE`, `STATUSREQ`, `STATUSRESP`, `ERROR`).
 
 ## AI assistant use
 
