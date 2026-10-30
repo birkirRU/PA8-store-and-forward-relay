@@ -236,7 +236,14 @@ Server::Answer Server::p_statusresp(int fd, const std::vector<std::string>& f) {
     for (size_t i = 1; i< f.size(); i++) {
         std::vector<std::string> parts = split_on(f[i], ':');
         if (parts.size() != 2 || !is_valid_name(parts[0])) continue;
-        if (parts[0] != GROUP_ID) continue;
+
+        // only groups it really holds messages for
+        if (parts[1].empty() || parts[1] == "0" ||
+            parts[1].find_first_not_of("0123456789") != std::string::npos) continue;
+
+        if (parts[0] == clients_[fd].name) continue; // its own messages: it delivers those itself
+        if (parts[0] != GROUP_ID && !is_connected_peer(parts[0])) continue;
+
         if (!clients_.count(fd)) break;
         queue_send(fd, "GETMSGS," + parts[0]);
     }
@@ -271,15 +278,18 @@ Server::Answer Server::p_sendmsg(const std::vector<std::string>& f) {
         ) return std::nullopt;
 
     time_t ts = std::stoll(f[3]);
-    
-    if (f[2] == GROUP_ID) {
-        Message msg{f[1], f[2], ts, f[4]};
-        mailboxes_[GROUP_ID].push_back(msg);
-        stored_++;
-        log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
-            f[1].c_str(), f[2].c_str(), mailboxes_[f[2]].size(), stored_);
-        return "";
-    }
 
-    return std::nullopt;
+    auto it = mailboxes_.find(f[2]);
+    size_t held = (it == mailboxes_.end()) ? 0 : it->second.size();
+    if (held >= MAX_PER_GROUP || stored_ >= MAX_STORED) {
+        log_note("store full, discarded message from %s for %s", f[1].c_str(), f[2].c_str()); // we recieved but couldn't store due to possible flooding of messages per client.
+        return ""; 
+    }
+    
+    Message msg{f[1], f[2], ts, f[4]};
+    mailboxes_[f[2]].push_back(msg);
+    stored_++;
+    log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
+        f[1].c_str(), f[2].c_str(), mailboxes_[f[2]].size(), stored_);
+    return "";
 }

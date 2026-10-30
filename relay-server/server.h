@@ -17,6 +17,9 @@ const size_t TARGET_PEERS = 4;      // open new server connections while we have
 const size_t MAX_PEERS = 8;         // close incoming servers beyond this
 const time_t RETRY_AFTER = 60;      // seconds before we dial the same server again
 
+const size_t MAX_PER_GROUP = 200;    // messages held for one destination
+const size_t MAX_STORED    = 2000;   // messages held in total
+
 class Server {
 public:
     explicit Server(uint16_t port);
@@ -105,6 +108,8 @@ private:
     size_t count_peers() const;
     std::string pick_candidate() const;
     time_t next_fallback_ = 0;
+
+    bool is_connected_peer(const std::string& id) const;
 
     uint16_t listening_port_;
     std::string own_ip_;

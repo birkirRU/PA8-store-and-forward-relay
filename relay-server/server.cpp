@@ -375,6 +375,9 @@ void Server::maintain_peers() {
     }
 }
 
+
+// --------------- HELPERS ------------------
+
 // Server connections including incoming ones and ones still connecting.
 size_t Server::count_peers() const {
     size_t n = 0;
@@ -427,6 +430,16 @@ std::string Server::find_own_ip(const char* via_ip, uint16_t via_port) {
     }
     close(s);
     return ip;
+}
+
+
+// declare in the class: bool is_connected_peer(const std::string& id) const;
+bool Server::is_connected_peer(const std::string& id) const {
+    for (const auto& kv : clients_) {
+        const Client& c = kv.second;
+        if (c.type.value == ConnType::peer && !c.connecting && c.name == id) return true;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
