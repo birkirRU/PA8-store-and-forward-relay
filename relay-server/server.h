@@ -13,7 +13,7 @@
 const uint16_t INSTRUCTOR_PORT = 5001;
 const std::string  INSTRUCTOR_IP = "130.208.246.98";
 
-const size_t TARGET_PEERS = 4;      // open new server connections while we have fewer than this
+const size_t TARGET_PEERS = 7;      // open new server connections while we have fewer than this
 const size_t MAX_PEERS = 8;         // close incoming servers beyond this
 const time_t RETRY_AFTER = 60;      // seconds before we dial the same server again
 
