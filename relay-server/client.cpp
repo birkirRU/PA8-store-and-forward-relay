@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
 
     int sock = connect_to(argv[1], argv[2]);
     print("INFO", std::string("connected to ") + argv[1] + ":" + argv[2]);
-    print("INFO", "commands: SENDMSG,<from>,<to>,<message>  GETMSG,<user>  STATUSREQ");
+    print("INFO", "commands: SENDMSG,<from>,<to>,<message>  GETMSG,<user>  STATUSREQ  LISTSERVERS");
 
     std::string input;     // typed text not yet ended by a newline
     std::string received;  // server bytes not yet forming a complete frame

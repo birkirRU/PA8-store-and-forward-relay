@@ -86,6 +86,7 @@ std::string Server::c_handle(const std::string& payload, const std::string& cmd)
     if (cmd == "SENDMSG")        answer = c_sendmsg(split_fields(payload, 4));
     else if (cmd == "GETMSG")    answer = c_getmsg(split_fields(payload, 2));
     else if (cmd == "STATUSREQ") answer = (payload == "STATUSREQ") ? c_statusreq() : "";
+    else if (cmd == "LISTSERVERS") answer = (payload == "LISTSERVERS") ? servers_list() : "";
 
     return answer;
 }
