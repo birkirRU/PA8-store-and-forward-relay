@@ -35,6 +35,8 @@ bool parse_server_entry(const std::string& entry, std::string& id, std::string& 
     in_addr addr;
     if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return false;
 
+    if (ip == "0.0.0.0" || ip.rfind("127.", 0) == 0) return false;
+
     if (port_text.empty() || port_text.size() > 5) return false;
     if (port_text.find_first_not_of("0123456789") != std::string::npos) return false;
     int value = std::stoi(port_text);
