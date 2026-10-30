@@ -164,7 +164,7 @@ Server::Answer Server::p_handle(int fd, Client& c, const std::string& payload, c
     if (cmd == "KEEPALIVE")  return p_keepalive(split_fields(payload, 2));
     if (cmd == "GETMSGS")    return p_getmsgs(fd, split_fields(payload, 2));
     if (cmd == "SENDMSG")    return p_sendmsg(split_fields(payload, 5));
-    if (cmd == "STATUSRESP") return p_statusresp(split_fields(payload));
+    if (cmd == "STATUSRESP") return p_statusresp(fd, split_fields(payload));
     if (cmd == "STATUSREQ")  return payload == "STATUSREQ" ? p_statusreq() : Answer{};
     if (cmd == "ERROR") {
         log_note("peer %s sent %s", c.name.c_str(), payload.c_str());
@@ -219,9 +219,19 @@ Server::Answer Server::p_keepalive(const std::vector<std::string>& f) {
     return "";
 
 }
+Server::Answer Server::p_statusresp(int fd, const std::vector<std::string>& f) {
+    if (f.size() < 2) return std::nullopt;
+    if (f[1] == "EMPTY") return "";
 
-Server::Answer Server::p_statusresp(const std::vector<std::string>& f) {
-    return f.size() >= 2 ? Answer{""} : Answer{};
+    for (size_t i = 1; i< f.size(); i++) {
+        std::vector<std::string> parts = split_on(f[i], ':');
+        if (parts.size() != 2 || !is_valid_name(parts[0])) continue;
+        if (parts[0] != GROUP_ID) continue;
+        if (!clients_.count(fd)) break;
+        queue_send(fd, "GETMSGS," + parts[0]);
+    }
+
+    return "";
 }
 
 Server::Answer Server::p_getmsgs(int fd, const std::vector<std::string>& f) {

@@ -341,7 +341,6 @@ void Server::on_timer() {
         if (!clients_.count(fd)) continue;
         Client& c = clients_[fd];
         c.last_statusreq = now;
-
         queue_send(fd, "STATUSREQ");
     }
 }

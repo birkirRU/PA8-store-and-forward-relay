@@ -76,7 +76,7 @@ private:
     Answer p_keepalive(const std::vector<std::string>& f);
     Answer p_getmsgs(int fd, const std::vector<std::string>& f);
     Answer p_sendmsg(const std::vector<std::string>& f);
-    Answer p_statusresp(const std::vector<std::string>& f);
+    Answer p_statusresp(int fd, const std::vector<std::string>& f);
     Answer p_statusreq();
 
     std::string servers_list() const;
