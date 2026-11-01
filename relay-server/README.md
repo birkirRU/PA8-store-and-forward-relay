@@ -61,26 +61,12 @@ Client commands remain unchanged from A6, only a single command has been added.
 | `STATUSREQ` | Every 90 s to every peer | Reply `STATUSRESP,<id>:<n>,...` or `STATUSRESP,EMPTY` |
 | `STATUSRESP,<id>:<n>,...` | In reply to `STATUSREQ` | Fetch messages for us or for our connected peers (see Relaying). No reply |
 
-Unknown or malformed commands from a server are logged as `DROP` and not answered.
-
 ## Server behaviour
 
 ### Connections
 - **One port for everything.** Our client and other servers connect to the same port.
   The first command on a connection decides what it is: a server always starts with
   `HELO`, our client never does.
-- **Many connections.** A single thread serves all connections with level-triggered
-  `epoll`. The listening socket, every connection and a 5-second `timerfd` are all in
-  one epoll set, so the server sleeps until something happens and uses no CPU while
-  idle.
-- **Outgoing connections** are non-blocking: `connect()` returns at once, and the
-  connection counts as open when epoll reports it writable and `SO_ERROR` is 0.
-- **Partial and joined frames.** TCP can split a frame across reads or join several
-  frames together. Each connection has an input buffer, and a command is handled only
-  once its whole frame has arrived. Several commands per connection are fine.
-- **Slow readers.** Each connection has an output buffer. A reply that does not fit in
-  the socket buffer is sent later, when the socket becomes writable. Other connections
-  are not blocked.
 
 ### Staying connected
 - Every 5 s the server counts its server connections (incoming, outgoing and still
@@ -104,9 +90,6 @@ Unknown or malformed commands from a server are logged as `DROP` and not answere
   and fetches it with `GETMSGS`.
 - A `SENDMSG` from a server is accepted on any connection and stored under its
   recipient. Messages for us wait for our client's `GETMSG,G_stammtischen`.
-- `GETMSGS` hands out every message held for that ID and deletes them. There is no
-  acknowledgement in the protocol, so a message can be lost if a connection drops just
-  after it was sent.
 
 ### Relaying
 - Every 90 s we send `STATUSREQ` to each peer. If the `STATUSRESP` lists messages for us,
@@ -130,17 +113,9 @@ Unknown or malformed commands from a server are logged as `DROP` and not answere
 - **Disconnects.** The connection's buffers are freed, and an incomplete frame left
   behind is logged. Its stored messages stay.
 - **Errors.**
-  - Startup failures make the server exit with status 1, with a message on stderr and
-    in the log. Examples are a port already in use and socket or epoll errors.
   - An error on one connection (`recv`/`send` failure, connection reset) closes only
     that connection, and the reason is logged.
-  - `EINTR` and `EAGAIN` are harmless and retried.
   - A peer that disappears never kills the server with SIGPIPE (`MSG_NOSIGNAL`).
-  - When the server runs out of file descriptors, it uses a reserved descriptor to
-    accept and immediately close the waiting connection. The listening socket therefore
-    never makes the loop spin.
-- Messages are kept in memory only and are lost when the server stops. The shutdown
-  line in the log says how many.
 
 ## Protocol choices and assumptions
 
@@ -174,7 +149,6 @@ readers, the peer limit, and startup and shutdown.
 
 About our log:
 -  We do not suppress or summarise repeated lines
-  repeated events.
 - Lines from 2026-10-25 and 2026-10-26 come from early versions: the first run rejected
   the instructor's `HELO` as `DROP` (2026-10-25T14:38:47Z), and `GETMSGS` was not
   implemented yet (2026-10-26T21:45:55Z).
@@ -185,21 +159,9 @@ About our log:
   build without the filter for `0.0.0.0` and `127.x` entries in `SERVERS` lists. After
   that start it still tried to connect to `0.0.0.0` 12 times (the last at
   2026-10-30T21:23:36Z). The submitted code has the filter.
-- The connection tag in notes and details (`Unknown6`, `Peer1`, `Client2`) is the
-  connection type and our internal connection number, not a group ID. A connection is
-  `Unknown` until its first command.
 - The reply to `GETMSGS` (our `SENDMSG` lines) and the `GETMSGS` we send after a
   `STATUSRESP` are logged just *before* the `RECV` line of the command that caused them,
   in the same second: those handlers send while they run, and `RECV` is written after.
-
-## Known limitations
-
-- Messages do not expire and are not deduplicated.
-- `GETMSGS` is answered for any group ID, so any server can collect the messages we
-  hold for another group.
-- A connection attempt to a server that never answers counts as a peer until the
-  kernel gives up (about 2 minutes); there is no handshake timeout of our own.
-- No per-IP rate limiting or temporary blocking.
 
 ## Points claimed
 
