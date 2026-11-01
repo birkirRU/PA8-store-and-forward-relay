@@ -40,18 +40,19 @@ private:
         }
     };
 
+    // One per connection, our own client and other servers alike (keyed by fd in clients_).
     struct Client {
         uint64_t id;
-        std::string in;
-        std::string out;
-        bool want_write = false;
+        std::string in;               // received bytes not yet forming a complete frame
+        std::string out;              // framed bytes the socket has not taken yet
+        bool want_write = false;      // EPOLLOUT registered (only while `out` is non-empty)
         std::string ip;
-        uint16_t port = 0;
+        uint16_t port = 0;            // for incoming connections: their source port, not their listening port
         ConnType type = {ConnType::unknown};
-        bool connecting = false;
-        bool outgoing = false;
+        bool connecting = false;      // our non-blocking connect() has not finished yet
+        bool outgoing = false;        // we opened this connection
         bool sent_helo = false;
-        std::string name = "";
+        std::string name = "";        // group ID from their HELO (empty until then)
         time_t last_keepalive = 0;
         time_t last_statusreq = 0;
         std::string target = "";      // group ID we dialled (empty for the instructor fallback)
@@ -61,7 +62,7 @@ private:
         uint16_t port;
         time_t next_try = 0;          // don't dial before this time
     };
-    using Answer = std::optional<std::string>;
+    using Answer = std::optional<std::string>;   // see the top of server_cmds.cpp
     struct Message {
         std::string from;
         std::string to;
@@ -103,7 +104,7 @@ private:
     void on_timer();
     int timer_fd_ = -1;
 
-    // Staying connected to 4-8 servers
+    // Staying connected: aim for TARGET_PEERS servers, accept at most MAX_PEERS
     void maintain_peers();
     size_t count_peers() const;
     std::string pick_candidate() const;
@@ -118,7 +119,7 @@ private:
     int spare_fd_ = -1;
     uint64_t next_id_ = 1;
     std::unordered_map<int, Client> clients_;
-    std::map<std::string, std::deque<Message>> mailboxes_;
+    std::map<std::string, std::deque<Message>> mailboxes_;   // held messages per recipient, oldest first
     size_t stored_ = 0;
-    std::map<std::string, Endpoint> known_;
+    std::map<std::string, Endpoint> known_;   // servers learned from SERVERS replies: who we can dial
 };

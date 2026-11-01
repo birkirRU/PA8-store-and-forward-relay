@@ -1,3 +1,14 @@
+// The protocol layer: what each command does. server.cpp owns the sockets.
+//
+//   c_*  commands from our own client (A6 protocol, replies are plain text)
+//   p_*  commands from other servers (A8 protocol)
+//
+// Peer handlers return an Answer, which decides both the log line and the reply:
+//   std::nullopt  rejected: logged as DROP, nothing sent back (never ERROR, to avoid ping-pong)
+//   ""            accepted, no reply: logged as RECV
+//   "text"        accepted: logged as RECV, "text" is sent back
+// A handler that must send more than one frame (GETMSGS, STATUSRESP) gets the fd
+// and calls queue_send() itself.
 #include <arpa/inet.h>
 
 #include <ctime>
@@ -22,6 +33,8 @@ std::vector<std::string> split_on(const std::string& s, char sep) {
     return out;
 }
 
+// One "<id>,<ip>,<port>" entry of a SERVERS list. Everything in it comes from another
+// server, so it is checked before it can end up in known_ and be dialled.
 bool parse_server_entry(const std::string& entry, std::string& id, std::string& ip, uint16_t& port) {
     std::vector<std::string> parts = split_fields(entry);
     if (parts.size() != 3) return false;
@@ -35,6 +48,8 @@ bool parse_server_entry(const std::string& entry, std::string& id, std::string& 
     in_addr addr;
     if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return false;
 
+    // Some servers advertise 0.0.0.0 (their bind address). Dialling it, or 127.x,
+    // reaches our own machine, not them.
     if (ip == "0.0.0.0" || ip.rfind("127.", 0) == 0) return false;
 
     if (port_text.empty() || port_text.size() > 5) return false;
@@ -48,13 +63,19 @@ bool parse_server_entry(const std::string& entry, std::string& id, std::string& 
 
 }  // namespace
 
+// Every complete frame from any connection ends up here.
 void Server::handle_command(int fd, const std::string& payload) {
     Client& c = clients_[fd];
     std::string cmd = payload.substr(0, payload.find(','));
+
+    // Clients and servers share one listening port. The first command decides what is
+    // at the other end, once: a server always starts with HELO, our client never does.
     if (c.type.value == ConnType::unknown)
         c.type.value = (cmd == "HELO") ? ConnType::peer : ConnType::client;
 
     const bool is_peer = c.type.value == ConnType::peer;
+    // The RECV line of a HELO carries "-" as group ID (log_event.h): the name is only
+    // known after the HELO has been handled, so remember it from before.
     const std::string name_before = c.name;
     const char* id = name_before.empty() ? nullptr : name_before.c_str();
 
@@ -73,8 +94,12 @@ void Server::handle_command(int fd, const std::string& payload) {
         return;
     }
 
+    // RECV is logged before the reply in *answer. Handlers that send themselves
+    // (GETMSGS, STATUSRESP) have already sent, so their SEND lines come before this RECV.
     log_event_bytes("RECV", c.ip.c_str(), c.port, id, payload.data(), payload.size());
 
+    // An incoming server only becomes a peer with its HELO, so the 8-peer limit is
+    // checked here. count_peers() includes this connection, hence ">".
     if (cmd == "HELO" && is_peer && !c.outgoing && count_peers() > MAX_PEERS) {
         log_note("%s: already %zu peers, closing the connection from %s", tag(fd).c_str(), MAX_PEERS, c.name.c_str());
         close_client(fd, "peer limit reached");
@@ -83,6 +108,9 @@ void Server::handle_command(int fd, const std::string& payload) {
 
     if (!answer->empty()) queue_send(fd, *answer);
 
+    // Accepting side of the handshake: their HELO -> our SERVERS -> our HELO.
+    // On connections we opened, our HELO already went out in finish_connect().
+    // queue_send() may have closed the connection, hence clients_.count(fd).
     if (cmd == "HELO" && is_peer && clients_.count(fd) && !clients_[fd].sent_helo) {
         clients_[fd].sent_helo = true;
         queue_send(fd, "HELO," GROUP_ID);
@@ -101,40 +129,13 @@ std::string Server::c_handle(const std::string& payload, const std::string& cmd)
 }
 
 // SENDMSG,<from>,<to>,<message>   -> "OK"
+// The client's SENDMSG has no timestamp: the message is created here, so we stamp it.
+// It is only stored (pull model): the recipient, or a server relaying for it, sees the
+// count in our KEEPALIVE / STATUSRESP and collects it with GETMSGS.
 std::string Server::c_sendmsg(const std::vector<std::string>& f) {
     if (f.size() != 4 || !is_valid_name(f[1]) || !is_valid_name(f[2])) return "";
 
     Message msg{f[1], f[2], std::time(nullptr), f[3]};
-
-    // --------------- MAY DELETE (push behvaiour) -------------------------
-    // // Before deciding wether to 
-    // // store or forward the message; check if recepiant peer exists (is connected to server)
-    // int peer_fd = -1;
-    // for (const auto& kv : clients_) {
-    //     const Client& c = kv.second;
-    //     if (c.type.value == ConnType::peer && // its a peer connection
-    //         !c.connecting && // peer connection is established
-    //         !c.name.empty() && // name is set
-    //         c.name == f[2]
-    //     )
-    //         peer_fd = kv.first;
-    // }
-    
-    // if (peer_fd != -1 ) { // it exists
-    //     Client& c = clients_[peer_fd];
-
-    //     // SENDMSG,<FROM_GROUP_ID>,<TO_GROUP_ID>,<TIMESTAMP>,<message content>
-    //     std::string msg_string = f[0] + "," + msg.from + "," + msg.to + "," + std::to_string(msg.timestamp) + "," + msg.text;
-    //     queue_send(peer_fd, msg_string);
-    // }
-
-    // else {  // no connected peer was found to deliver the message to, store it for time being, waiting for other peers to fetch it
-    //     mailboxes_[f[2]].push_back(msg);
-    //     stored_++;
-    //     log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
-    //         f[1].c_str(), f[2].c_str(), mailboxes_[f[2]].size(), stored_);
-    // }
-    // --------------- END OF MAY DELETE -------------------------
     mailboxes_[f[2]].push_back(msg);
     stored_++;
     log_note("stored message from %s for %s (%zu waiting for them, %zu stored in total)",
@@ -143,6 +144,8 @@ std::string Server::c_sendmsg(const std::vector<std::string>& f) {
 }
 
 // GETMSG,<user>   -> "<from>,<message>", or "NO_MESSAGE"
+// Messages from other groups to us are stored under our own GROUP_ID, so our client
+// reads its mail with GETMSG,<GROUP_ID>.
 std::string Server::c_getmsg(const std::vector<std::string>& f) {
     if (f.size() != 2 || !is_valid_name(f[1])) return "";
     auto it = mailboxes_.find(f[1]);
@@ -183,6 +186,8 @@ Server::Answer Server::p_handle(int fd, Client& c, const std::string& payload, c
     return std::nullopt;
 }
 
+// HELO,<id>   -> SERVERS,<us first>;<peers>...
+// The ID is taken on trust: nothing in the protocol proves who a server is.
 Server::Answer Server::p_helo(Client& c, const std::vector<std::string>& f) {
     if (f.size() != 2 || !is_valid_name(f[1])) return std::nullopt;
     c.name = f[1];
@@ -219,9 +224,11 @@ Server::Answer Server::p_servers(const std::string& payload) {
 
 Server::Answer Server::p_statusreq() { return "STATUSRESP," + c_statusreq(); }
 
+// KEEPALIVE,<n>: the peer holds n messages for us. n > 0 means fetch them (pull model).
 Server::Answer Server::p_keepalive(const std::vector<std::string>& f) {
     if (f.size() != 2) return std::nullopt;
 
+    // At most 6 digits, so stoi cannot throw on a hostile number.
     if (f[1].find_first_not_of("0123456789") != std::string::npos
         || f[1].empty()
         || f[1].size() > 6) return std::nullopt;
@@ -231,6 +238,10 @@ Server::Answer Server::p_keepalive(const std::vector<std::string>& f) {
     return "";
 
 }
+// STATUSRESP,<group>:<n>,...   (the answer to the STATUSREQ we send every 90 s)
+// This is how we relay: if the peer holds mail for us, or for a server we are
+// connected to, we fetch it with GETMSGS. Mail for a connected peer then goes out on
+// our next KEEPALIVE to that peer, and the peer fetches it from us.
 Server::Answer Server::p_statusresp(int fd, const std::vector<std::string>& f) {
     if (f.size() < 2) return std::nullopt;
     if (f[1] == "EMPTY") return "";
@@ -253,6 +264,9 @@ Server::Answer Server::p_statusresp(int fd, const std::vector<std::string>& f) {
     return "";
 }
 
+// GETMSGS,<group>   -> one SENDMSG per message we hold for <group>, then they are deleted.
+// No answer at all if we hold none. There is no acknowledgement in the protocol, so a
+// message is lost if the connection drops right after sending (best effort, as agreed).
 Server::Answer Server::p_getmsgs(int fd, const std::vector<std::string>& f) {
     if (f.size() != 2 || !is_valid_name(f[1])) return std::nullopt; 
     auto it = mailboxes_.find(f[1]);
@@ -271,7 +285,11 @@ Server::Answer Server::p_getmsgs(int fd, const std::vector<std::string>& f) {
 }
 
 // SENDMSG,<FROM_GROUP_ID>,<TO_GROUP_ID>,<TIMESTAMP>,<message content>
-Server::Answer Server::p_sendmsg(const std::vector<std::string>& f) { 
+// Accepted on any connection. Every message is stored under its recipient: mail for us
+// waits for our client's GETMSG, mail for others waits until the recipient (or a relay)
+// fetches it. The timestamp is kept as the sender set it. split_fields(payload, 5)
+// leaves any commas inside the content.
+Server::Answer Server::p_sendmsg(const std::vector<std::string>& f) {
     if (f.size() != 5 || !is_valid_name(f[1])  || !is_valid_name(f[2])) return std::nullopt; 
 
     if (f[3].find_first_not_of("0123456789") != std::string::npos
@@ -279,8 +297,9 @@ Server::Answer Server::p_sendmsg(const std::vector<std::string>& f) {
         || f[3].size() > 10
         ) return std::nullopt;
 
-    time_t ts = std::stoll(f[3]);
+    time_t ts = std::stoll(f[3]);   // safe: at most 10 digits
 
+    // Caps per recipient and in total, so a flooding server cannot exhaust our memory.
     auto it = mailboxes_.find(f[2]);
     size_t held = (it == mailboxes_.end()) ? 0 : it->second.size();
     if (held >= MAX_PER_GROUP || stored_ >= MAX_STORED) {

@@ -1,3 +1,9 @@
+// The network layer: sockets, the epoll loop, connecting and accepting, buffered
+// output, the timer and staying connected. What each command means is in server_cmds.cpp.
+//
+// Single thread, level-triggered epoll. Everything (the listening socket, every
+// connection and the 5 s timer) is an fd in one epoll set, so the server sleeps in
+// epoll_wait() and uses no CPU while idle.
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -111,6 +117,7 @@ void Server::run() {
             if (fd == listen_fd_) { accept_client(); continue; }
             if (fd == timer_fd_) { on_timer(); continue; }
             if (!clients_.count(fd)) continue;  // closed earlier in this batch
+            // Our own non-blocking connect: writable (or an error) means it has finished.
             if (clients_[fd].connecting) {
                 if (events[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) finish_connect(fd);
                 continue;
@@ -171,6 +178,8 @@ void Server::read_client(int fd) {
         return;
     }
 
+    // TCP is a byte stream: one recv() may hold part of a frame or several frames.
+    // Bytes collect in `in`; only complete frames come out, the rest waits for more.
     std::vector<std::string> payloads, problems;
     clients_[fd].in.append(buf, n);
     extract_frames(clients_[fd].in, payloads, problems);
@@ -240,6 +249,8 @@ void Server::finish_connect(int fd) {
     queue_send(fd, "HELO," GROUP_ID);
 }
 
+// Our SERVERS reply: ourselves first (agreed on Piazza), then the peers we dialled.
+// Incoming peers are left out: we only know their source port, not the port they listen on.
 std::string Server::servers_list() const {
     std::string out = std::string(GROUP_ID) + ',' + own_ip_ + ',' + std::to_string(listening_port_) + ';' ; // list yourself first
     for (const auto& kv : clients_) {
@@ -295,8 +306,10 @@ bool Server::flush(int fd) {
 }
 
 // Stored messages are kept: users do not have to be connected to receive mail.
+// Every connection ends here, whatever the reason, so this is also where failed
+// outgoing connections are noted for maintain_peers().
 void Server::close_client(int fd, const std::string& reason) {
-    Client c = clients_[fd];
+    Client c = clients_[fd];   // a copy: the entry is erased below but still needed for the log
     std::string who = tag(fd);
     if (!clients_[fd].in.empty()) // halve finished frame
         log_note("%s: dropped %zu bytes of an incomplete frame", who.c_str(), clients_[fd].in.size());
@@ -314,6 +327,9 @@ void Server::close_client(int fd, const std::string& reason) {
     }
 }
 
+// Every 5 s: keep enough peers, then per peer a KEEPALIVE (at most once a minute, as
+// the spec requires) with the number of messages we hold for it, and a STATUSREQ every
+// 90 s so we learn what it holds for us and for our other peers (relaying).
 void Server::on_timer() {
     uint64_t expirations;
     if (read(timer_fd_, &expirations, sizeof expirations) < 0) return;   // must read, or epoll fires again
@@ -410,6 +426,8 @@ std::string Server::pick_candidate() const {
 }
 
 // Local address the kernel would use to reach `via_ip`. No packet is sent.
+// Needed for the first entry of our SERVERS reply: the listening socket is bound to
+// INADDR_ANY (0.0.0.0), which other servers cannot dial.
 std::string Server::find_own_ip(const char* via_ip, uint16_t via_port) {
     int s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s < 0) return "";
@@ -433,7 +451,7 @@ std::string Server::find_own_ip(const char* via_ip, uint16_t via_port) {
 }
 
 
-// declare in the class: bool is_connected_peer(const std::string& id) const;
+// True if we have a finished connection to server `id` (used for relaying).
 bool Server::is_connected_peer(const std::string& id) const {
     for (const auto& kv : clients_) {
         const Client& c = kv.second;
