@@ -20,6 +20,8 @@ const time_t RETRY_AFTER = 60;      // seconds before we dial the same server ag
 const size_t MAX_PER_GROUP = 200;    // messages held for one destination
 const size_t MAX_STORED    = 2000;   // messages held in total
 
+const size_t MAX_KNOWN_SERVERS = 500;
+
 class Server {
 public:
     explicit Server(uint16_t port);

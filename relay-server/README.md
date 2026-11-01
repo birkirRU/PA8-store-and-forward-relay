@@ -11,10 +11,9 @@ not reachable, and passes on messages for groups further away.
 | `server.h`         | The `Server` class and its constants                                        |
 | `client.cpp`       | The client: a poll loop over stdin and the server socket                    |
 | `common.h/.cpp`    | Shared code: framing, command field splitting, name check, timestamps       |
-| `identity.h`       | Our group ID, exactly as written by `tsam-register`                         |
-| `log_event.h`      | The course's log writer, unchanged                                          |
+| `identity.h`       | Our group ID, from `tsam-register`                         |
+| `log_event.h`      | Given log writer                                          |
 | `server.log`       | Our complete log for the whole assignment                                   |
-| `document/`        | The statement of authorship, and working notes from during the assignment (not kept up to date) |
 
 ## Compiling and running
 
@@ -36,29 +35,19 @@ covers every run (each run starts with a `START` line). Stop the server with Ctr
 
 The server runs on **Linux only**, because it uses `epoll`, `timerfd`, `accept4`,
 `SOCK_NONBLOCK` and `MSG_NOSIGNAL`. It was developed on Rocky Linux 9 (and edited on
-macOS), and built, run and tested on the TSAM server (Ubuntu 24.04).
+macOS), and built, ran on the TSAM server (Ubuntu 24.04).
 
 ## Client commands
 
-Commands and replies use the framing from the assignment. We read the 5000-byte limit as
-applying to the command text between STX and ETX, so a frame can be up to 5005 bytes.
+
+Client commands remain unchanged from A6, only a single command has been added.
 
 | Command                         | Reply                                                                                        |
 |---------------------------------|----------------------------------------------------------------------------------------------|
-| `SENDMSG,<from>,<to>,<message>` | `OK`. The server stamps the message with the current time and holds it (see Delivery)      |
-| `GETMSG,<name>`                 | `<from>,<message>` (the oldest message for `<name>`, which is then deleted), or `NO_MESSAGE` |
-| `STATUSREQ`                     | `<name1>:<count1>,<name2>:<count2>,...`, or `EMPTY`: everyone we hold messages for           |
 | `LISTSERVERS`                   | Our own entry and the servers we dialled: the same list as our `SERVERS` reply (our addition) |
-| anything else                   | `ERROR,command does not exist or is malformed`                                               |
 
 - Group IDs take the place of user names. Messages addressed to our group are read
   with `GETMSG,G_stammtischen`.
-- Names are 1-14 characters: ASCII letters, digits, `_` and `-`. This covers every
-  `G_`/`I_` group ID and keeps `STATUSREQ` and `SERVERS` replies unambiguous, since a
-  name cannot contain `,`, `:` or `;`.
-- The message may contain commas and may be empty.
-- Command names are case-sensitive, and commands take no extra fields: `STATUSREQ,x`
-  is malformed.
 
 ## Server-to-server commands
 
@@ -71,7 +60,6 @@ applying to the command text between STX and ETX, so a frame can be up to 5005 b
 | `SENDMSG,<from>,<to>,<ts>,<text>` | In reply to `GETMSGS` | Stored under `<to>`, with the original timestamp. No reply |
 | `STATUSREQ` | Every 90 s to every peer | Reply `STATUSRESP,<id>:<n>,...` or `STATUSRESP,EMPTY` |
 | `STATUSRESP,<id>:<n>,...` | In reply to `STATUSREQ` | Fetch messages for us or for our connected peers (see Relaying). No reply |
-| `ERROR,...` (not in the spec) | Never | Logged, never answered, so two servers cannot answer each other's errors forever |
 
 Unknown or malformed commands from a server are logged as `DROP` and not answered.
 
@@ -174,31 +162,25 @@ Piazza:
 
 ## Server log
 
-The log is written with the course's `log_event.h`, unchanged, in the required format:
-`<TIMESTAMP> <EVENT> <IP:PORT> <GROUP_ID> <detail>`, with `log_note` lines
-(`<TIMESTAMP> note ...`) for what the server decided and why. For example:
+We used:
 
-```
-2026-10-30T15:17:55Z note 1 peer(s), want 4: connecting to G_christnik
-2026-10-30T15:21:07Z ACCEPT 130.208.246.98:45976 - Unknown6 connected (6 connected)
-2026-10-30T15:21:07Z RECV 130.208.246.98:45976 - HELO,G_minions
-2026-10-30T16:10:34Z note stored message from G_bigbrother for G_stammtischen (1 waiting for them, 2 stored in total)
-```
+- `log_note()`: (`<TIMESTAMP> note ...`) for what the server decided and why.
+- Other logging functions : strictly followed what `log_event.h` wanted.
+
 
 Notes record: peers we connect to and why, servers learned from `SERVERS`, rejected
 entries, messages stored, sent and delivered with counts, discarded messages, slow
 readers, the peer limit, and startup and shutdown.
 
 About our log:
-- It is the complete log of every run, from 2026-10-25 to the time of submission. We
-  have not removed, reordered or edited any lines, and we do not suppress or summarise
+-  We do not suppress or summarise repeated lines
   repeated events.
 - Lines from 2026-10-25 and 2026-10-26 come from early versions: the first run rejected
   the instructor's `HELO` as `DROP` (2026-10-25T14:38:47Z), and `GETMSGS` was not
   implemented yet (2026-10-26T21:45:55Z).
 - Two `SERVERS` lines contain garbage instead of our own entry
   (2026-10-29T21:59:26Z and 2026-10-29T23:14:19Z, `SERVERS,isten)0.0.0.0,...`). This was a
-  bug in building the string, fixed the same night.
+  bug in building the string.
 - The server that produced most of the log was started at 2026-10-30T17:33:36Z from a
   build without the filter for `0.0.0.0` and `127.x` entries in `SERVERS` lists. After
   that start it still tried to connect to `0.0.0.0` 12 times (the last at
@@ -218,25 +200,6 @@ About our log:
 - A connection attempt to a server that never answers counts as a peer until the
   kernel gives up (about 2 minutes); there is no handshake timeout of our own.
 - No per-IP rate limiting or temporary blocking.
-- A reply longer than 5000 bytes cannot be framed. The server logs it and sends nothing.
-
-## Client behaviour
-
-- Prints every command sent and every reply received with a timestamp:
-  ```
-  2026-10-12 18:23:45 SENT: GETMSG,G_stammtischen
-  2026-10-12 18:23:45 RECV: G_leo,Hello from G_leo
-  ```
-- Uses `poll` to wait on stdin and the server at the same time, so it never
-  busy-waits. Incoming bytes are reassembled into complete frames.
-- Skips empty lines and strips a trailing `\r`. A command longer than 5000 bytes is not
-  sent, and an error is printed instead.
-- When stdin ends (Ctrl-D, or the end of piped input), the client waits up to 5 seconds
-  for the replies it is still owed, then exits. It also exits when the server closes the
-  connection.
-- Exit status is 0 on a normal end and 1 on errors: cannot connect, send or recv
-  failure, or a missing reply.
-- Stdout is line-buffered, so output redirected to a file appears immediately.
 
 ## Points claimed
 
@@ -307,5 +270,61 @@ At least 3 student peers at once (`KEEPALIVE` traffic with each within the same 
 
 ## Statement of authorship
 
-Who wrote which part, and the tools and sources we used, are in
-[`document/authorship.md`](document/authorship.md).
+### Birkir:
+| Part | Files | Work |
+|---|---|---|
+| Server architecture and command handling | `server.h`, `server.cpp`, `server_cmds.cpp`, `Makefile` | Restructured the server, separated client and peer commands, and added automatic connection type detection based on the first command. |
+| Outgoing peer connection | `server.cpp` | `connect_peer()` (non-blocking connect to the instructor server) and `finish_connect()` (sends `HELO`). |
+| Server list | `server.cpp`, `server_cmds.cpp` | `servers_list()`, parsing `SERVERS,...` entries, storing them in `known_`. |
+| Ticking function | `server.cpp` | `timerfd` created in the constructor, added to epoll, and handled by `on_timer()` (sends `KEEPALIVE,<n>` every 60 s per peer) and (`STATUSREQ` every 90s ). |
+| Logging | `server.cpp` | Replaced `logmsg` with `log_event`, `log_event_bytes` and `log_note`. |
+| Accept change | `server.cpp` | `accept_client()` now records the client's IP and port. |
+| Name rules | `common.cpp`, `common.h` | Names can be 1-14 characters and may include `_` and `-`. `split_fields` has a default for `max_fields`. |
+| Relay behaviour | `p_sendmsg()` and `p_statusresp()` | Modified, such that each message is stored upon recieved `SENDMSG`. On recieved `STATUSRESP` only fetch and store msgs that aren't you/any connected peer. |
+| Assistance   | `server_cmds.cpp` | Helped and participated with protocol design and definition (Piazza threads and polls). |
+
+### Bjorn:
+| Part | Files | Work |
+|---|---|---|
+| Incoming SENDMSG | `server_cmds.cpp` | `p_sendmsg`: checks the 5 fields, both group IDs and the timestamp (digits only, at most 10), and stores messages addressed to us under our `GROUP_ID` so our client can fetch them with `GETMSG`. |
+| GETMSGS | `server_cmds.cpp`, `server.h` | `p_getmsgs`: answers with one `SENDMSG` per held message, then deletes them. Passed `fd` through `p_handle` so one command can send several replies. |
+| KEEPALIVE | `server_cmds.cpp` | `p_keepalive`: checks the count and answers `GETMSGS,<our id>` when it is above 0. |
+| STATUSRESP | `server_cmds.cpp`, `server.h` | `p_statusresp`: reads the `<group>:<count>` entries and sends `GETMSGS` for messages held for us. |
+| LISTSERVERS client command | `server_cmds.cpp`, `client.cpp` | Lists our own entry and the servers we dialled (the same list as our `SERVERS` reply). Added to the client's help line. |
+| Peer management | `server.cpp`, `server.h`, `server_cmds.cpp` | A target number of peers, one new connection per tick, `G_` servers first, a 60 s wait before redialling, the instructor as a fallback, and at most 8 peers.|
+
+
+## Sources used (man pages)
+
+| Used for | Where in code | Man page |
+|---|---|---|
+| Epoll instance | `epoll_create1` in constructor | `epoll_create1(2)`, `epoll(7)` |
+| Add/remove fds from epoll | `epoll_ctl` | `epoll_ctl(2)` |
+| Waiting for events in the main loop | `epoll_wait` in `run()` | `epoll_wait(2)`, `epoll(7)` (level-triggered behaviour) |
+| 5-second timer as an fd | `timerfd_create`, `timerfd_settime` | `timerfd_create(2)`, `timerfd_settime(2)` |
+| Reading the timer expiration count | `read(timer_fd_, ...)` in `on_timer()` | `timerfd_create(2)` (reading section), `read(2)` |
+| Listening socket | `socket`, `bind`, `listen`, `setsockopt(SO_REUSEADDR)` | `socket(2)`, `bind(2)`, `listen(2)`, `setsockopt(2)`, `socket(7)` |
+| Accepting clients, getting their address | `accept4` with `SOCK_NONBLOCK` | `accept4(2)` |
+| Non-blocking outgoing connect | `connect` returning `EINPROGRESS` | `connect(2)` |
+| Checking if the connect succeeded | `getsockopt(SO_ERROR)` in `finish_connect()` | `getsockopt(2)`, `socket(7)` |
+| Waiting for connect completion | `EPOLLOUT` on a connecting socket | `connect(2)` (EINPROGRESS section), `epoll_ctl(2)` |
+| Address conversion | `inet_pton`, `inet_ntoa`, `htons`, `ntohs` | `inet_pton(3)`, `inet_ntoa(3)`, `byteorder(3)` |
+| Timestamps / keepalive timing | `time(nullptr)` | `time(2)` |
+| Close and error text | `close`, `strerror` | `close(2)`, `strerror(3)` |
+
+
+## AI assistant use
+
+We used an AI assistant (Claude) to understand concepts that are hard to write code around.
+
+### Birkir
+- **Level-triggered epoll loop:** how `epoll_wait` keeps reporting an fd as ready until I deal with it, and why that matters in my loop.
+- **timerfd:** how a timer becomes a file descriptor that fits into the epoll loop the same way `listen_fd_` does, and why I must `read()` it or epoll fires again.
+- **How `flush` works:** how output is buffered per client, and how `EPOLLOUT` is switched on/off when the socket cannot take all the data.
+- **Brainstorm protocol definition**: discuss ideas/refine protocol definition to follow KISS principles. 
+
+### Bjorn:
+- **Step-by-step guidance:** for `p_sendmsg`, `p_getmsgs`, `p_keepalive`, `p_statusresp` and `LISTSERVERS`, Claude explained the existing code and then reviewed what I wrote.
+- **Peer management:** I wrote this code with claude after we simplified the design together (`maintain_peers`, `count_peers`, `pick_candidate`, the retry rule in `close_client`, and the peer limit in `handle_command`).
+- **Reviewing:** reading the assignment, finding why our Assignment 6 tests failed, and reviewing commits and merge conflicts.
+

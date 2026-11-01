@@ -87,7 +87,7 @@ bool is_valid_name(const std::string& s) {
     return true;
 }
 
-unsigned int parse_port(const char* str) {
+uint16_t parse_port(const char* str) {
     char* end;
     errno = 0;
     unsigned long port = std::strtoul(str, &end, 10);
@@ -95,7 +95,7 @@ unsigned int parse_port(const char* str) {
         fprintf(stderr, "invalid port '%s' (must be 1-65535)\n", str);
         exit(1);
     }
-    return static_cast<unsigned int>(port);
+    return static_cast<uint16_t>(port);
 }
 
 static std::string format_now(const char* fmt) {

@@ -43,7 +43,7 @@ bool is_valid_name(const std::string& s);
 // ---------------------------------------------------------------------------
 
 // Parses a TCP port (1-65535). Prints an error and exits on invalid input.
-unsigned int parse_port(const char* str);
+uint16_t parse_port(const char* str);
 
 // Local time for the client printout: "2026-10-12 18:23:45".
 std::string timestamp();

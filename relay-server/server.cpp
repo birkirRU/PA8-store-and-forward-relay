@@ -117,7 +117,7 @@ void Server::run() {
             if (fd == listen_fd_) { accept_client(); continue; }
             if (fd == timer_fd_) { on_timer(); continue; }
             if (!clients_.count(fd)) continue;  // closed earlier in this batch
-            // Our own non-blocking connect: writable (or an error) means it has finished.
+            // non-blocking connect: writable (or an error) means it has finished.
             if (clients_[fd].connecting) {
                 if (events[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) finish_connect(fd);
                 continue;
@@ -327,8 +327,7 @@ void Server::close_client(int fd, const std::string& reason) {
     }
 }
 
-// Every 5 s: keep enough peers, then per peer a KEEPALIVE (at most once a minute, as
-// the spec requires) with the number of messages we hold for it, and a STATUSREQ every
+// Every 5 s: keep enough peers, then per peer a KEEPALIVE (at most once a minute) with the number of messages we hold for it, and a STATUSREQ every
 // 90 s so we learn what it holds for us and for our other peers (relaying).
 void Server::on_timer() {
     uint64_t expirations;
@@ -467,7 +466,7 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         return 1;
     }
-    unsigned int port = parse_port(argv[1]);
+    uint16_t port = parse_port(argv[1]);
 
     // Ctrl-C / kill end the server with a final log line. No SA_RESTART, so the
     // signal interrupts epoll_wait and the loop sees it immediately.
@@ -477,7 +476,7 @@ int main(int argc, char* argv[]) {
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
 
-    Server server(static_cast<uint16_t>(port));
+    Server server(port);
     server.run();
     return 0;
 }

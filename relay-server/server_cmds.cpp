@@ -212,7 +212,7 @@ Server::Answer Server::p_servers(const std::string& payload) {
         if (id == GROUP_ID) continue;
 
         bool is_new = known_.count(id) == 0;
-        if (is_new && known_.size() >= 500) continue; // Cap on known server, a hostile server can fill our memory
+        if (is_new && known_.size() >= MAX_KNOWN_SERVERS) continue; // Cap on known server, a hostile server can fill our memory
 
         Endpoint& ep = known_[id];   // update in place: keeps next_try of a server we already knew
         ep.ip = ip;
