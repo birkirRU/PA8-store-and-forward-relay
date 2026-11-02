@@ -44,7 +44,7 @@ Client commands remain unchanged from A6, only a single command has been added.
 
 | Command                         | Reply                                                                                        |
 |---------------------------------|----------------------------------------------------------------------------------------------|
-| `LISTSERVERS`                   | Our own entry and the servers we dialled: the same list as our `SERVERS` reply (our addition) |
+| `LISTSERVERS`                   | Our own entry and the servers we dialled: the same list as our `SERVERS` reply. |
 
 - Group IDs take the place of user names. Messages addressed to our group are read
   with `GETMSG,G_stammtischen`.
