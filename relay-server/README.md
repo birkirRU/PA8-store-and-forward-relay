@@ -247,6 +247,15 @@ relaying for it:
 | `G_G-Monster` -> `G_unit` | 2026-11-02T07:23:56Z (`G_G-Monster`) | 2026-11-02T07:24:01Z (`G_unit`) |
 | `G_G-Monster` -> `G_unit` | 2026-11-02T09:53:56Z (`G_G-Monster`) | 2026-11-02T09:54:06Z (`G_unit`) |
 
+### Bonus: 2(d) Indirect Bot, patience
+Messages our server accepted for a group it could not reach, held, and delivered later:
+
+| Message | Stored | Recipient unreachable | Delivered |
+|---|---|---|---|
+| `G_stammtischen` -> `G_TangoLango` | 2026-10-31T19:11:17Z | last `CLOSE` 2026-10-31T05:19:25Z; `connect failed: Connection refused` 2026-11-02T11:42:36Z and 2026-11-02T16:03:11Z | 2026-11-02T16:27:41Z (`G_TangoLango` reconnected at 16:27:39Z, `sent 1 held message(s)`) |
+| `G_stammtischen` -> `G_wow` | 2026-10-30T17:16:19Z | no connection to `G_wow`; still waiting at 2026-10-30T17:17:39Z and 2026-10-30T20:33:54Z | 2026-10-30T21:50:31Z (`GETMSGS,G_wow` from `G_kleina`) |
+| `G_stammtischen` -> `G_leo` | 2026-10-30T15:39:51Z | no connection to `G_leo` until delivery | 2026-10-31T19:10:34Z (`GETMSGS,G_leo` from `G_blueberries`) |
+
 ### Bonus: 2(e) Edge Bot
 At least 3 student peers at once (`KEEPALIVE` traffic with each within the same minute):
 
