@@ -211,6 +211,42 @@ Also `I_instr1` after a `TEST_ME`, all on 2026-10-30T16:55:52Z (same five lines,
 Submission and log format as described above; code structure and log notes as
 described under Server behaviour and Server log.
 
+### Bonus: 2(c) Chatty Bot (10 groups)
+Messages to us from 10 student groups, each also fetched by our client:
+
+| Group | `SENDMSG` arrives | Handed to our client (`GETMSG`) |
+|---|---|---|
+| `G_leo` | 2026-10-30T15:39:00Z | 2026-10-30T15:39:14Z |
+| `G_bigbrother` | 2026-10-30T16:10:34Z | 2026-10-30T16:10:59Z |
+| `G_nafn` | 2026-10-30T17:03:08Z | 2026-10-30T17:05:12Z |
+| `G_wow` | 2026-10-30T17:13:08Z | 2026-10-30T17:15:27Z |
+| `G_TangoLango` | 2026-10-30T21:22:01Z | 2026-10-31T19:08:34Z |
+| `G_blueberries` | 2026-11-01T15:48:46Z | 2026-11-01T15:51:10Z |
+| `G_ellur` | 2026-11-01T16:45:24Z | 2026-11-02T09:46:57Z |
+| `G_G` | 2026-11-01T17:23:58Z | 2026-11-02T09:47:07Z |
+| `G_G-Monster` | 2026-11-01T22:33:46Z | 2026-11-02T09:52:22Z |
+| `G_order66` | 2026-11-01T22:56:30Z | 2026-11-02T09:52:52Z |
+
+### Bonus: 2(d) Indirect Bot, relaying
+Messages where we are neither sender nor recipient. Each came in as a `SENDMSG` and went
+out in reply to a `GETMSGS` for its recipient, from the recipient itself or a server
+relaying for it:
+
+| Message | In (from server) | Out (to server) |
+|---|---|---|
+| `G_nafn` -> `G_EastBot` | 2026-10-30T21:45:06Z (`G_kleina`) | 2026-10-30T21:48:11Z (`G_GOATS`) |
+| `G_wow` -> `G_EastBot` | 2026-10-30T21:46:36Z (`G_kleina`) | 2026-10-30T21:48:11Z (`G_GOATS`) |
+| `G_nafn` -> `G_EastBot` | 2026-10-30T21:46:36Z (`G_kleina`) | 2026-10-30T21:48:11Z (`G_GOATS`) |
+| `G_blueberries` -> `G_NettNet` | 2026-11-01T15:49:01Z (`G_blueberries`) | 2026-11-01T15:49:16Z (`G_NettNet`) |
+| `G_blueberries` -> `G_EastBot` | 2026-11-01T15:49:01Z (`G_blueberries`) | 2026-11-01T15:50:09Z (`G_NettNet`) |
+| `G_G-Monster` -> `G_mjolk` | 2026-11-01T22:58:36Z (`G_G-Monster`) | 2026-11-01T22:58:46Z (`G_mjolk`) |
+| `I_oracle` -> `G_bachata` | 2026-11-01T23:04:36Z (`G_G-Monster`) | 2026-11-01T23:04:46Z (`G_mjolk`) |
+| `G_G-Monster` -> `G_mjolk` | 2026-11-01T23:48:31Z (`G_G-Monster`) | 2026-11-01T23:48:46Z (`G_mjolk`) |
+| `G_G-Monster` -> `G_unit` | 2026-11-02T02:21:41Z (`G_G-Monster`) | 2026-11-02T02:22:01Z (`G_unit`) |
+| `G_G-Monster` -> `G_unit` | 2026-11-02T04:28:26Z (`G_G-Monster`) | 2026-11-02T04:28:40Z (`G_G`) |
+| `G_G-Monster` -> `G_unit` | 2026-11-02T07:23:56Z (`G_G-Monster`) | 2026-11-02T07:24:01Z (`G_unit`) |
+| `G_G-Monster` -> `G_unit` | 2026-11-02T09:53:56Z (`G_G-Monster`) | 2026-11-02T09:54:06Z (`G_unit`) |
+
 ### Bonus: 2(e) Edge Bot
 At least 3 student peers at once (`KEEPALIVE` traffic with each within the same minute):
 
